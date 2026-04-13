@@ -146,7 +146,7 @@ Students: {len(school_students)} / {max_students}
         elif menu == "Students":
             st.subheader("👨‍🎓 Students")
 
-            with st.form("student_form"):
+with st.form("student_form"):
     name = st.text_input("Name")
     blood = st.selectbox("Blood Group", ["O+", "A+", "B+", "AB+"])
     allergy = st.text_input("Allergies")
@@ -172,7 +172,7 @@ Students: {len(school_students)} / {max_students}
                     "school_id": sid
                 })
                 save_db("students.json", students_db)
-                st.success("Student added!")
+                st.success("Student added!")            
      
 
         # -------- UPGRADE --------with st.form("student_form"):
