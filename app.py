@@ -143,36 +143,41 @@ Students: {len(school_students)} / {max_students}
                 st.warning(f"📢 {broadcasts[-1]['msg']}")
 
         # -------- STUDENTS --------
-        elif menu == "Students":
-            st.subheader("👨‍🎓 Students")
+         elif menu == "Students":
+    st.subheader("👨‍🎓 Students")
 
-with st.form("student_form"):
-    name = st.text_input("Name")
-    blood = st.selectbox("Blood Group", ["O+", "A+", "B+", "AB+"])
-    allergy = st.text_input("Allergies")
+    with st.form("student_form"):
+        name = st.text_input("Name")
+        blood = st.selectbox("Blood Group", ["O+", "A+", "B+", "AB+"])
+        allergy = st.text_input("Allergies")
 
-    submitted = st.form_submit_button("Add Student")
+        submitted = st.form_submit_button("Add Student")
 
-    if submitted:
-        if len(school_students) >= max_students:
-            st.error("Limit reached! Upgrade plan.")
-        else:
-            exists = any(
-                s["name"] == name and s["school_id"] == sid
-                for s in students_db
-            )
-
-            if exists:
-                st.warning("Student already exists!")
+        if submitted:
+            if len(school_students) >= max_students:
+                st.error("Limit reached! Upgrade plan.")
             else:
-                students_db.append({
-                    "name": name,
-                    "blood": blood,
-                    "allergy": allergy,
-                    "school_id": sid
-                })
-                save_db("students.json", students_db)
-                st.success("Student added!")            
+                exists = any(
+                    s["name"] == name and s["school_id"] == sid
+                    for s in students_db
+                )
+
+                if exists:
+                    st.warning("Student already exists!")
+                else:
+                    students_db.append({
+                        "name": name,
+                        "blood": blood,
+                        "allergy": allergy,
+                        "school_id": sid
+                    })
+                    save_db("students.json", students_db)
+                    st.success("Student added!")
+
+    # 👇 keep this OUTSIDE the form but INSIDE Students menu
+    st.write("### Student List")
+    for s in school_students:
+        st.write(f"- {s['name']} ({s['blood']})")
      
 
         # -------- UPGRADE --------with st.form("student_form"):
