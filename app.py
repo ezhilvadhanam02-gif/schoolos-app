@@ -111,7 +111,7 @@ else:
                 st.success("Sent!")
 
     # ================= SCHOOL =================
-    else:
+
         sid = st.session_state.auth["school_id"]
         school = schools_db[sid]
 
@@ -146,7 +146,7 @@ Students: {len(school_students)} / {max_students}
 elif menu == "Students":
     st.subheader("👨‍🎓 Students")
 
-    with st.form("student_form"):
+  with st.form("student_form"):
         name = st.text_input("Name")
         blood = st.selectbox("Blood Group", ["O+", "A+", "B+", "AB+"])
         allergy = st.text_input("Allergies")
