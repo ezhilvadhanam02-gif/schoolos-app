@@ -143,7 +143,7 @@ Students: {len(school_students)} / {max_students}
                 st.warning(f"📢 {broadcasts[-1]['msg']}")
 
         # -------- STUDENTS --------
-         elif menu == "Students":
+elif menu == "Students":
     st.subheader("👨‍🎓 Students")
 
     with st.form("student_form"):
