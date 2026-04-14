@@ -2,8 +2,6 @@ import streamlit as st
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
-from fpdf import FPDF
-import os
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="SchoolOS Pro", layout="wide")
@@ -22,34 +20,6 @@ def run_query(query, params=(), fetch=False):
     if fetch:
         return cur.fetchall()
     conn.commit()
-
-# ---------------- PDF RECEIPT ----------------
-def generate_receipt(student, amount, month, date, school_name):
-    os.makedirs("receipts", exist_ok=True)
-
-    pdf = FPDF()
-    pdf.add_page()
-
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(200, 10, school_name, ln=True, align="C")
-    pdf.cell(200, 10, "Fee Receipt", ln=True, align="C")
-
-    pdf.ln(10)
-
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, f"Student: {student}", ln=True)
-    pdf.cell(200, 10, f"Month: {month}", ln=True)
-    pdf.cell(200, 10, f"Amount Paid: ₹{amount}", ln=True)
-    pdf.cell(200, 10, f"Date: {date}", ln=True)
-
-    pdf.ln(10)
-    pdf.cell(200, 10, "Status: PAID", ln=True)
-
-    filename = f"receipt_{uuid.uuid4().hex}.pdf"
-    path = os.path.join("receipts", filename)
-
-    pdf.output(path)
-    return path
 
 # ---------------- INIT DB ----------------
 def init_db():
@@ -98,6 +68,30 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         msg TEXT,
         date TEXT
+    )
+    """)
+
+    # 🔥 PHASE 2 TABLES
+    run_query("""
+    CREATE TABLE IF NOT EXISTS inventory (
+        id TEXT PRIMARY KEY,
+        item_name TEXT,
+        category TEXT,
+        quantity INTEGER,
+        min_quantity INTEGER,
+        school_id TEXT
+    )
+    """)
+
+    run_query("""
+    CREATE TABLE IF NOT EXISTS care_logs (
+        id TEXT PRIMARY KEY,
+        student_id TEXT,
+        student_name TEXT,
+        activity TEXT,
+        notes TEXT,
+        time TEXT,
+        school_id TEXT
     )
     """)
 
@@ -214,7 +208,7 @@ else:
 
             st.metric("Total Schools", total)
             st.metric("Active Schools", active)
-            st.metric("Projected Revenue", f"₹{revenue}")
+            st.metric("Revenue", f"₹{revenue}")
 
     # ================= SCHOOL =================
     else:
@@ -242,13 +236,16 @@ Plan: {school['plan']}
 Students: {len(students)} / {max_students}
         """)
 
-        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Fees", "Upgrade"])
+        menu = st.sidebar.selectbox(
+            "Menu",
+            ["Dashboard", "Students", "Fees", "Inventory", "Care Logs", "Upgrade"]
+        )
 
-        # ---- DASHBOARD ----
+        # -------- DASHBOARD --------
         if menu == "Dashboard":
             st.metric("Total Students", len(students))
 
-        # ---- STUDENTS ----
+        # -------- STUDENTS --------
         elif menu == "Students":
             st.subheader("Student Profiles")
 
@@ -264,25 +261,22 @@ Students: {len(students)} / {max_students}
                 student_class = st.text_input("Class")
 
                 if st.form_submit_button("Add Student"):
-                    if len(students) >= max_students:
-                        st.error("Limit reached!")
-                    else:
-                        run_query(
-                            "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                str(uuid.uuid4()), name, blood, allergy,
-                                parent_name, parent_phone,
-                                likes, dislikes, siblings,
-                                student_class, sid
-                            )
+                    run_query(
+                        "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()), name, blood, allergy,
+                            parent_name, parent_phone,
+                            likes, dislikes, siblings,
+                            student_class, sid
                         )
-                        st.success("Student added!")
-                        st.rerun()
+                    )
+                    st.success("Added!")
+                    st.rerun()
 
             for s in students:
                 st.write(f"👶 {s['name']} | {s['blood']} | Parent: {s['parent_name']}")
 
-        # ---- FEES ----
+        # -------- FEES --------
         elif menu == "Fees":
             st.subheader("Fee Management")
 
@@ -313,54 +307,82 @@ Students: {len(students)} / {max_students}
             fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
 
             for f in fees:
-                col1, col2, col3, col4 = st.columns([2,2,2,1])
+                col1, col2, col3, col4 = st.columns(4)
 
                 col1.write(f["student_name"])
-                col2.write(f"₹{f['amount']}")
-                col3.write(f["month"])
+                col2.write(f["month"])
+                col3.write(f"₹{f['amount']}")
 
                 if f["status"] == "Pending":
                     if col4.button("Mark Paid", key=f["id"]):
-
-                        payment_time = str(datetime.now())
-
                         run_query(
                             "UPDATE fees SET status=?, payment_date=? WHERE id=?",
-                            ("Paid", payment_time, f["id"])
+                            ("Paid", str(datetime.now()), f["id"])
                         )
-
-                        st.success("✅ Payment received!")
-
-                        receipt_path = generate_receipt(
-                            f["student_name"],
-                            f["amount"],
-                            f["month"],
-                            payment_time,
-                            school["name"]
-                        )
-
-                        with open(receipt_path, "rb") as file:
-                            st.download_button(
-                                "📄 Download Receipt",
-                                file,
-                                "receipt.pdf"
-                            )
-
+                        st.success("Payment done!")
+                        st.info(f"Receipt: {f['student_name']} paid ₹{f['amount']}")
                         st.rerun()
                 else:
                     col4.success("Paid")
 
-        # ---- UPGRADE ----
+        # -------- INVENTORY --------
+        elif menu == "Inventory":
+            st.subheader("📦 Inventory")
+
+            with st.form("add_item"):
+                item = st.text_input("Item Name")
+                category = st.selectbox("Category", ["First Aid", "Kitchen", "Stationery"])
+                qty = st.number_input("Quantity", 0)
+                min_qty = st.number_input("Min Level", 0)
+
+                if st.form_submit_button("Add"):
+                    run_query(
+                        "INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), item, category, qty, min_qty, sid)
+                    )
+                    st.success("Added!")
+                    st.rerun()
+
+            items = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
+
+            for i in items:
+                st.write(f"{i['item_name']} | {i['category']} | Qty: {i['quantity']}")
+                if i["quantity"] <= i["min_quantity"]:
+                    st.error("Low Stock!")
+
+        # -------- CARE LOGS --------
+        elif menu == "Care Logs":
+            st.subheader("👶 Care Logs")
+
+            student_map = {s["name"]: s["id"] for s in students}
+
+            with st.form("log"):
+                st_name = st.selectbox("Student", list(student_map.keys()))
+                activity = st.selectbox("Activity", ["Meal","Sleep","Potty","Play","Medicine"])
+                notes = st.text_input("Notes")
+
+                if st.form_submit_button("Add Log"):
+                    run_query(
+                        "INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            student_map[st_name],
+                            st_name,
+                            activity,
+                            notes,
+                            str(datetime.now()),
+                            sid
+                        )
+                    )
+                    st.success("Logged!")
+                    st.rerun()
+
+            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC", (sid,), True)
+
+            for l in logs:
+                st.write(f"{l['student_name']} | {l['activity']} | {l['notes']}")
+
+        # -------- UPGRADE --------
         elif menu == "Upgrade":
             for p, price in PLAN_PRICES.items():
                 st.write(f"{p} - ₹{price}")
-
-            new_plan = st.selectbox("Select Plan", list(PLAN_LIMITS.keys()))
-
-            if st.button("Upgrade Plan"):
-                run_query(
-                    "UPDATE schools SET plan=? WHERE id=?",
-                    (new_plan, sid)
-                )
-                st.success("Plan upgraded!")
-                st.rerun()
