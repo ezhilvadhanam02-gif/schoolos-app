@@ -172,21 +172,21 @@ else:
         plan = st.selectbox("Plan", ["Basic","Standard","Premium","Enterprise"])
 
         if st.button("Create School"):
-            expiry = (datetime.now()+timedelta(days=365)).strftime("%Y-%m-%d")
 
-            existing = run_query(
-                "SELECT * FROM schools WHERE id=?",
-                (sid,), True
-            )
-
-            if existing:
-                st.warning("⚠️ School ID already exists")
+            if not sid or not name or not pw:
+                st.error("⚠️ All fields are required")
             else:
-                run_query(
-                    "INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
-                    (sid,name,pw,plan,expiry,0)
-                )
-                st.success("School created!")
+                expiry = (datetime.now()+timedelta(days=365)).strftime("%Y-%m-%d")
+
+                try:
+                    run_query(
+                        "INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
+                        (sid,name,pw,plan,expiry,0)
+                    )
+                    st.success("✅ School created!")
+
+                except sqlite3.IntegrityError:
+                    st.warning("⚠️ School ID already exists")
 
     # ================= SCHOOL =================
     elif st.session_state.auth["role"] == "school":
