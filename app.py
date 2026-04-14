@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="SchoolOS Pro", layout="wide")
 
-# ---------------- RESET DB (TEMP FIX) ----------------
+# ---------------- RESET DB ----------------
 if st.sidebar.button("⚠️ Reset Database"):
     if os.path.exists("schoolos.db"):
         os.remove("schoolos.db")
@@ -46,10 +46,6 @@ def init_db():
         amount INTEGER, month TEXT, status TEXT, payment_date TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE IF NOT EXISTS broadcasts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT, date TEXT
-    )""")
-
     run_query("""CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY, item_name TEXT, category TEXT,
         quantity INTEGER, min_quantity INTEGER, school_id TEXT
@@ -66,10 +62,6 @@ def init_db():
     )""")
 
 init_db()
-
-# ---------------- PRICING ----------------
-PLAN_LIMITS = {"Basic":30,"Standard":80,"Premium":500,"Enterprise":float("inf")}
-PLAN_PRICES = {"Basic":2000,"Standard":4000,"Premium":7999,"Enterprise":9999}
 
 # ---------------- SESSION ----------------
 if "auth" not in st.session_state:
@@ -92,12 +84,12 @@ if not st.session_state.auth["logged_in"]:
 
     if st.button("Login"):
 
-        # ADMIN
+        # ADMIN LOGIN
         if role == "School/Admin" and user == "admin" and pw == "admin123":
             st.session_state.auth = {"logged_in": True, "role": "admin"}
             st.rerun()
 
-        # SCHOOL
+        # SCHOOL LOGIN
         school = run_query(
             "SELECT * FROM schools WHERE id=? AND pass=?",
             (user, pw), True
@@ -113,7 +105,7 @@ if not st.session_state.auth["logged_in"]:
                 }
                 st.rerun()
 
-        # PARENT
+        # PARENT LOGIN
         parent = run_query(
             "SELECT * FROM students WHERE parent_phone=? AND parent_pass=?",
             (user, pw), True
@@ -145,7 +137,7 @@ else:
         sid = st.text_input("School ID")
         name = st.text_input("School Name")
         pw = st.text_input("Password")
-        plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
+        plan = st.selectbox("Plan", ["Basic","Standard","Premium","Enterprise"])
 
         if st.button("Create School"):
             expiry = (datetime.now()+timedelta(days=365)).strftime("%Y-%m-%d")
@@ -162,11 +154,12 @@ else:
         menu = st.sidebar.selectbox("Menu",
             ["Students","Fees","Inventory","Care Logs","Gallery"])
 
-        # STUDENTS
+        # -------- STUDENTS --------
         if menu == "Students":
             with st.form("add_student"):
                 name = st.text_input("Name")
-                blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
+                blood = st.selectbox("Blood Group",
+                    ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
                 parent = st.text_input("Parent Name")
                 phone = st.text_input("Parent Phone")
                 ppass = st.text_input("Parent Password")
@@ -179,10 +172,164 @@ else:
                     st.success("Student added!")
                     st.rerun()
 
-            st.write("### Students")
+            st.write("### Student List")
             for s in students:
                 st.write(f"{s['name']} | Parent: {s['parent_name']}")
 
-        # FEES
+        # -------- FEES --------
         elif menu == "Fees":
-            for s
+            st.subheader("💰 Fee Management")
+
+            student_map = {s["name"]: s["id"] for s in students}
+
+            with st.form("fee_form"):
+                student_name = st.selectbox("Student", list(student_map.keys()))
+                amount = st.number_input("Amount", min_value=0)
+                month = st.selectbox("Month",
+                    ["Jan","Feb","Mar","Apr","May","Jun",
+                     "Jul","Aug","Sep","Oct","Nov","Dec"])
+
+                if st.form_submit_button("Add Fee"):
+                    run_query(
+                        "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            student_map[student_name],
+                            student_name,
+                            amount,
+                            month,
+                            "Pending",
+                            "",
+                            sid
+                        )
+                    )
+                    st.success("Fee added!")
+                    st.rerun()
+
+            fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
+
+            st.write("### Fee Records")
+
+            for f in fees:
+                col1, col2, col3, col4 = st.columns(4)
+
+                col1.write(f["student_name"])
+                col2.write(f["month"])
+                col3.write(f"₹{f['amount']}")
+
+                if f["status"] == "Pending":
+                    if col4.button("Mark Paid", key=f["id"]):
+                        run_query(
+                            "UPDATE fees SET status=?, payment_date=? WHERE id=?",
+                            ("Paid", str(datetime.now()), f["id"])
+                        )
+                        st.success("Payment recorded!")
+                        st.rerun()
+                else:
+                    col4.success("Paid")
+
+        # -------- INVENTORY --------
+        elif menu == "Inventory":
+            item = st.text_input("Item Name")
+            qty = st.number_input("Quantity", min_value=0)
+
+            if st.button("Add Item"):
+                run_query(
+                    "INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), item, "General", qty, 1, sid)
+                )
+                st.success("Item added!")
+
+        # -------- CARE LOGS --------
+        elif menu == "Care Logs":
+            student_map = {s["name"]: s["id"] for s in students}
+
+            st_name = st.selectbox("Student", list(student_map.keys()))
+            activity = st.selectbox("Activity", ["Meal","Sleep","Play","Toilet"])
+            notes = st.text_input("Notes")
+
+            if st.button("Add Log"):
+                run_query(
+                    "INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(uuid.uuid4()),
+                        student_map[st_name],
+                        st_name,
+                        activity,
+                        notes,
+                        str(datetime.now()),
+                        sid
+                    )
+                )
+                st.success("Log added!")
+
+        # -------- GALLERY --------
+        elif menu == "Gallery":
+            st.subheader("📸 Upload Photo")
+
+            student_map = {s["name"]: s["id"] for s in students}
+
+            st_name = st.selectbox("Student", list(student_map.keys()))
+            img = st.file_uploader("Upload Image", type=["jpg","png"])
+            caption = st.text_input("Caption")
+
+            if st.button("Upload"):
+                if img:
+                    run_query(
+                        "INSERT INTO gallery VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            student_map[st_name],
+                            st_name,
+                            caption,
+                            img.read(),
+                            sid
+                        )
+                    )
+                    st.success("Photo uploaded!")
+
+    # ================= PARENT =================
+    elif st.session_state.auth["role"] == "parent":
+
+        student_id = st.session_state.auth["student_id"]
+
+        student = run_query(
+            "SELECT * FROM students WHERE id=?",
+            (student_id,), True
+        )[0]
+
+        st.title(f"👶 {student['name']}")
+
+        st.write("### Profile")
+        st.write(f"Blood Group: {student['blood']}")
+        st.write(f"Allergy: {student['allergy'] or 'None'}")
+
+        # CARE LOGS
+        logs = run_query(
+            "SELECT * FROM care_logs WHERE student_id=?",
+            (student_id,), True
+        )
+
+        st.write("### Daily Logs")
+        for l in logs:
+            st.write(f"{l['activity']} - {l['time']}")
+
+        # FEES
+        fees = run_query(
+            "SELECT * FROM fees WHERE student_id=?",
+            (student_id,), True
+        )
+
+        st.write("### Fees")
+        for f in fees:
+            st.write(f"{f['month']} - ₹{f['amount']} - {f['status']}")
+
+        # GALLERY
+        imgs = run_query(
+            "SELECT * FROM gallery WHERE student_id=?",
+            (student_id,), True
+        )
+
+        st.write("### Photos")
+        for i in imgs:
+            st.image(i["image"], caption=i["caption"])
