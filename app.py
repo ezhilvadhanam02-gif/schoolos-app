@@ -1,60 +1,82 @@
 import streamlit as st
-import json, os, uuid
+import sqlite3
+import uuid
 from datetime import datetime, timedelta
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="SchoolOS Pro", layout="wide")
+st.set_page_config(
+    page_title="SchoolOS Pro",
+    page_icon="🏫",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # ---------------- DATABASE ----------------
-def load_db(file, default):
-    if not os.path.exists(file):
-        with open(file, "w") as f:
-            json.dump(default, f)
-    with open(file, "r") as f:
-        return json.load(f)
+@st.cache_resource
+def get_db_connection():
+    conn = sqlite3.connect('schoolos.db', check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def save_db(file, data):
-    with open(file, "w") as f:
-        json.dump(data, f, indent=2)
+def init_db():
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS schools (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    pass TEXT,
+                    plan TEXT,
+                    expiry TEXT,
+                    extra_students INTEGER DEFAULT 0
+                 )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS students (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    blood TEXT,
+                    allergy TEXT,
+                    school_id TEXT,
+                    FOREIGN KEY(school_id) REFERENCES schools(id)
+                 )''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    msg TEXT,
+                    date TEXT
+                 )''')
+    
+    conn.commit()
+    conn.close()
 
-schools_db = load_db("schools.json", {})
-students_db = load_db("students.json", [])
-broadcasts = load_db("broadcasts.json", [])
+init_db()  # Run once when app starts
 
-# ---------------- PRICING ----------------
-PLAN_LIMITS = {
-    "Basic": 30,
-    "Standard": 80,
-    "Premium": 500,
-    "Enterprise": float('inf')
-}
-
-PLAN_PRICES = {
-    "Basic": 2000,
-    "Standard": 4000,
-    "Premium": 7999,
-    "Enterprise": 9999
-}
-
-# ---------------- SESSION ----------------
+# ---------------- SESSION STATE ----------------
 if "auth" not in st.session_state:
     st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
 
-# ---------------- LOGIN ----------------
+# ---------------- LOGIN PAGE ----------------
 if not st.session_state.auth["logged_in"]:
-    st.title("🏫 SchoolOS Pro Login")
-
-    user = st.text_input("User ID")
+    st.title("🏫 SchoolOS Pro")
+    st.markdown("### Login to your School Dashboard")
+    
+    user = st.text_input("User ID (School ID or admin)")
     pw = st.text_input("Password", type="password")
-
-    if st.button("Login"):
+    
+    if st.button("🔑 Login", type="primary"):
+        conn = get_db_connection()
+        c = conn.cursor()
+        
         if user == "admin" and pw == "admin123":
             st.session_state.auth = {"logged_in": True, "role": "admin"}
             st.rerun()
-
-        elif user in schools_db and schools_db[user]["pass"] == pw:
-            expiry = datetime.strptime(schools_db[user]["expiry"], "%Y-%m-%d")
-
+        
+        c.execute("SELECT * FROM schools WHERE id = ? AND pass = ?", (user, pw))
+        school = c.fetchone()
+        conn.close()
+        
+        if school:
+            expiry = datetime.strptime(school["expiry"], "%Y-%m-%d")
             if datetime.now() < expiry:
                 st.session_state.auth = {
                     "logged_in": True,
@@ -63,153 +85,159 @@ if not st.session_state.auth["logged_in"]:
                 }
                 st.rerun()
             else:
-                st.error("Subscription expired")
+                st.error("❌ Subscription expired. Contact admin.")
+        else:
+            st.error("❌ Invalid User ID or Password")
 
-# ---------------- MAIN APP ----------------
+# ---------------- MAIN APP (After Login) ----------------
 else:
-
-    if st.sidebar.button("Logout"):
+    if st.sidebar.button("🚪 Logout"):
         st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
         st.rerun()
 
-    # ================= ADMIN =================
+    # ADMIN DASHBOARD
     if st.session_state.auth["role"] == "admin":
-        st.title("👑 Admin Dashboard")
-
-        tab1, tab2 = st.tabs(["➕ Add School", "📢 Broadcast"])
-
+        st.title("👑 Admin Command Center")
+        tab1, tab2 = st.tabs(["➕ Add New School", "📢 Broadcast Message"])
+        
         with tab1:
-            st.subheader("Create New School")
-
-            sid = st.text_input("School ID")
+            st.subheader("Onboard New School")
+            sid = st.text_input("School ID (example: school_01)")
             name = st.text_input("School Name")
-            pw = st.text_input("Password")
-            plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
-
-            if st.button("Create School"):
+            pw = st.text_input("Password for school")
+            plan = st.selectbox("Choose Plan", ["Basic", "Standard", "Premium", "Enterprise"])
+            
+            if st.button("✅ Create School Account"):
+                conn = get_db_connection()
+                c = conn.cursor()
                 expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-
-                schools_db[sid] = {
-                    "name": name,
-                    "pass": pw,
-                    "plan": plan,
-                    "expiry": expiry,
-                    "extra_students": 0
-                }
-
-                save_db("schools.json", schools_db)
-                st.success("✅ School created successfully!")
+                c.execute("INSERT OR REPLACE INTO schools VALUES (?, ?, ?, ?, ?, ?)",
+                          (sid, name, pw, plan, expiry, 0))
+                conn.commit()
+                conn.close()
+                st.success(f"🎉 School '{name}' created successfully!")
 
         with tab2:
-            msg = st.text_area("Send message to all schools")
+            st.subheader("Send Broadcast to All Schools")
+            msg = st.text_area("Message content")
+            if st.button("📡 Send to All Schools"):
+                conn = get_db_connection()
+                c = conn.cursor()
+                c.execute("INSERT INTO broadcasts (msg, date) VALUES (?, ?)",
+                          (msg, str(datetime.now())))
+                conn.commit()
+                conn.close()
+                st.success("Broadcast sent successfully!")
 
-            if st.button("Send Broadcast"):
-                broadcasts.append({"msg": msg, "date": str(datetime.now())})
-                save_db("broadcasts.json", broadcasts)
-                st.success("📢 Broadcast sent!")
-
-    # ================= SCHOOL =================
+    # SCHOOL DASHBOARD
     elif st.session_state.auth["role"] == "school":
-
         sid = st.session_state.auth["school_id"]
-        school = schools_db[sid]
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM schools WHERE id = ?", (sid,))
+        school = c.fetchone()
+        conn.close()
 
-        st.title(f"🏫 {school['name']} Dashboard")
+        st.title(f"🏫 {school['name']}")
 
-        # ---- PLAN INFO ----
-        base_limit = PLAN_LIMITS[school["plan"]]
-        extra = school.get("extra_students", 0)
-        max_students = base_limit if base_limit == float('inf') else base_limit + (extra * 50)
+        PLAN_LIMITS = {"Basic": 30, "Standard": 80, "Premium": 500, "Enterprise": float('inf')}
+        base = PLAN_LIMITS[school["plan"]]
+        max_students = base if base == float('inf') else base + (school["extra_students"] * 50)
 
-        school_students = [s for s in students_db if s["school_id"] == sid]
+        # Student count
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) as cnt FROM students WHERE school_id = ?", (sid,))
+        student_count = c.fetchone()["cnt"]
+        conn.close()
 
-        st.sidebar.markdown("### 📊 Plan Info")
-        st.sidebar.info(f"""
-Plan: {school['plan']}
-Students: {len(school_students)} / {max_students}
-        """)
+        st.sidebar.success(f"Plan: {school['plan']}")
+        st.sidebar.info(f"Students: {student_count} / {max_students}")
 
-        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Upgrade"])
+        menu = st.sidebar.selectbox("Menu", ["📊 Dashboard", "👦 Students", "💎 Upgrade Plan"])
 
-        # -------- DASHBOARD --------
-        if menu == "Dashboard":
-            st.subheader("📊 Overview")
+        if menu == "📊 Dashboard":
+            st.metric("Total Students", student_count)
+            st.metric("Current Plan", school["plan"])
+            
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT * FROM broadcasts ORDER BY id DESC LIMIT 1")
+            latest = c.fetchone()
+            conn.close()
+            if latest:
+                st.warning(f"📢 Latest Broadcast: {latest['msg']}")
 
-            col1, col2 = st.columns(2)
-            col1.metric("Total Students", len(school_students))
-            col2.metric("Current Plan", school["plan"])
-
-            if broadcasts:
-                st.warning(f"📢 {broadcasts[-1]['msg']}")
-
-        # -------- STUDENTS --------
-        elif menu == "Students":
-            st.subheader("👨‍🎓 Manage Students")
-
-            with st.form("student_form"):
-                name = st.text_input("Student Name")
+        elif menu == "👦 Students":
+            st.subheader("Manage Students")
+            
+            with st.form("add_student"):
+                name = st.text_input("Student Full Name")
                 blood = st.selectbox("Blood Group", ["O+", "A+", "B+", "AB+"])
-                allergy = st.text_input("Allergies")
-
-                submitted = st.form_submit_button("➕ Add Student")
-
+                allergy = st.text_input("Allergies (if any)")
+                submitted = st.form_submit_button("Add Student")
+                
                 if submitted:
-                    if len(school_students) >= max_students:
-                        st.error("⚠️ Limit reached! Upgrade plan.")
+                    if student_count >= max_students:
+                        st.error("Student limit reached! Please upgrade your plan.")
                     else:
-                        exists = any(
-                            s["name"].lower() == name.lower() and s["school_id"] == sid
-                            for s in students_db
-                        )
-
-                        if exists:
-                            st.warning("⚠️ Student already exists!")
+                        conn = get_db_connection()
+                        c = conn.cursor()
+                        c.execute("SELECT 1 FROM students WHERE name = ? AND school_id = ?", (name, sid))
+                        if c.fetchone():
+                            st.warning("Student already exists!")
                         else:
-                            students_db.append({
-                                "id": str(uuid.uuid4()),
-                                "name": name,
-                                "blood": blood,
-                                "allergy": allergy,
-                                "school_id": sid
-                            })
-                            save_db("students.json", students_db)
-                            st.success("✅ Student added!")
+                            student_id = str(uuid.uuid4())
+                            c.execute("INSERT INTO students VALUES (?, ?, ?, ?, ?)",
+                                      (student_id, name, blood, allergy, sid))
+                            conn.commit()
+                            conn.close()
+                            st.success("Student added successfully!")
+                            st.rerun()
 
-            st.write("### 📋 Student List")
+            st.write("### Current Students")
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT * FROM students WHERE school_id = ?", (sid,))
+            students = c.fetchall()
+            conn.close()
 
-            for s in school_students:
-                col1, col2 = st.columns([4,1])
-                col1.write(f"{s['name']} ({s['blood']})")
-
-                if col2.button("❌", key=s["id"]):
-                    students_db = [stu for stu in students_db if stu["id"] != s["id"]]
-                    save_db("students.json", students_db)
+            for s in students:
+                col1, col2 = st.columns([4, 1])
+                col1.write(f"**{s['name']}** ({s['blood']}) — Allergies: {s['allergy'] or 'None'}")
+                if col2.button("🗑️ Delete", key=s['id']):
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("DELETE FROM students WHERE id = ?", (s['id'],))
+                    conn.commit()
+                    conn.close()
                     st.rerun()
 
-        # -------- UPGRADE --------
-        elif menu == "Upgrade":
-            st.subheader("💰 Upgrade Plan")
+        elif menu == "💎 Upgrade Plan":
+            st.subheader("Upgrade Your Plan")
+            PLAN_PRICES = {"Basic": 2000, "Standard": 4000, "Premium": 7999, "Enterprise": 9999}
+            
+            for p, price in PLAN_PRICES.items():
+                st.write(f"**{p}** → ₹{price}/year")
+            
+            new_plan = st.selectbox("Select New Plan", list(PLAN_PRICES.keys()))
+            if st.button("Upgrade Plan Now"):
+                conn = get_db_connection()
+                c = conn.cursor()
+                c.execute("UPDATE schools SET plan = ? WHERE id = ?", (new_plan, sid))
+                conn.commit()
+                conn.close()
+                st.success("Plan upgraded successfully!")
+                st.rerun()
 
-            for plan, price in PLAN_PRICES.items():
-                st.write(f"**{plan}** - ₹{price}")
-
-            new_plan = st.selectbox("Choose Plan", list(PLAN_LIMITS.keys()))
-
-            if st.button("Upgrade"):
-                school["plan"] = new_plan
-                save_db("schools.json", schools_db)
-                st.success("✅ Plan upgraded!")
-
-            st.write("### ➕ Add Student Capacity")
-
-            add_option = st.selectbox("Add", ["+50", "+100"])
-
-            if st.button("Add Capacity"):
-                if add_option == "+50":
-                    school["extra_students"] += 1
-                else:
-                    school["extra_students"] += 2
-
-                save_db("schools.json", schools_db)
-                st.success("✅ Capacity updated!")
-                
+            st.divider()
+            add_option = st.selectbox("Add Extra Capacity", ["+50 students", "+100 students"])
+            if st.button("Add Extra Capacity"):
+                extra_add = 1 if "+50" in add_option else 2
+                conn = get_db_connection()
+                c = conn.cursor()
+                c.execute("UPDATE schools SET extra_students = extra_students + ? WHERE id = ?", (extra_add, sid))
+                conn.commit()
+                conn.close()
+                st.success("Capacity increased!")
+                st.rerun()
