@@ -31,34 +31,66 @@ def run_query(query, params=(), fetch=False):
 # ---------------- INIT DB ----------------
 def init_db():
     run_query("""CREATE TABLE IF NOT EXISTS schools (
-        id TEXT PRIMARY KEY, name TEXT, pass TEXT,
-        plan TEXT, expiry TEXT, extra_students INTEGER DEFAULT 0
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        pass TEXT,
+        plan TEXT,
+        expiry TEXT,
+        extra_students INTEGER DEFAULT 0
     )""")
 
     run_query("""CREATE TABLE IF NOT EXISTS students (
-        id TEXT PRIMARY KEY, name TEXT, blood TEXT, allergy TEXT,
-        parent_name TEXT, parent_phone TEXT, parent_pass TEXT,
-        likes TEXT, dislikes TEXT, siblings TEXT, class TEXT, school_id TEXT
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        blood TEXT,
+        allergy TEXT,
+        parent_name TEXT,
+        parent_phone TEXT,
+        parent_pass TEXT,
+        likes TEXT,
+        dislikes TEXT,
+        siblings TEXT,
+        class TEXT,
+        school_id TEXT
     )""")
 
     run_query("""CREATE TABLE IF NOT EXISTS fees (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        amount INTEGER, month TEXT, status TEXT, payment_date TEXT, school_id TEXT
+        id TEXT PRIMARY KEY,
+        student_id TEXT,
+        student_name TEXT,
+        amount INTEGER,
+        month TEXT,
+        status TEXT,
+        payment_date TEXT,
+        school_id TEXT
     )""")
 
     run_query("""CREATE TABLE IF NOT EXISTS inventory (
-        id TEXT PRIMARY KEY, item_name TEXT, category TEXT,
-        quantity INTEGER, min_quantity INTEGER, school_id TEXT
+        id TEXT PRIMARY KEY,
+        item_name TEXT,
+        category TEXT,
+        quantity INTEGER,
+        min_quantity INTEGER,
+        school_id TEXT
     )""")
 
     run_query("""CREATE TABLE IF NOT EXISTS care_logs (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        activity TEXT, notes TEXT, time TEXT, school_id TEXT
+        id TEXT PRIMARY KEY,
+        student_id TEXT,
+        student_name TEXT,
+        activity TEXT,
+        notes TEXT,
+        time TEXT,
+        school_id TEXT
     )""")
 
     run_query("""CREATE TABLE IF NOT EXISTS gallery (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        caption TEXT, image BLOB, school_id TEXT
+        id TEXT PRIMARY KEY,
+        student_id TEXT,
+        student_name TEXT,
+        caption TEXT,
+        image BLOB,
+        school_id TEXT
     )""")
 
 init_db()
@@ -84,12 +116,12 @@ if not st.session_state.auth["logged_in"]:
 
     if st.button("Login"):
 
-        # ADMIN LOGIN
+        # ADMIN
         if role == "School/Admin" and user == "admin" and pw == "admin123":
             st.session_state.auth = {"logged_in": True, "role": "admin"}
             st.rerun()
 
-        # SCHOOL LOGIN
+        # SCHOOL
         school = run_query(
             "SELECT * FROM schools WHERE id=? AND pass=?",
             (user, pw), True
@@ -105,7 +137,7 @@ if not st.session_state.auth["logged_in"]:
                 }
                 st.rerun()
 
-        # PARENT LOGIN
+        # PARENT
         parent = run_query(
             "SELECT * FROM students WHERE parent_phone=? AND parent_pass=?",
             (user, pw), True
@@ -141,18 +173,34 @@ else:
 
         if st.button("Create School"):
             expiry = (datetime.now()+timedelta(days=365)).strftime("%Y-%m-%d")
-            run_query("INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
-                      (sid,name,pw,plan,expiry,0))
-            st.success("School created!")
+
+            existing = run_query(
+                "SELECT * FROM schools WHERE id=?",
+                (sid,), True
+            )
+
+            if existing:
+                st.warning("⚠️ School ID already exists")
+            else:
+                run_query(
+                    "INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
+                    (sid,name,pw,plan,expiry,0)
+                )
+                st.success("School created!")
 
     # ================= SCHOOL =================
     elif st.session_state.auth["role"] == "school":
         sid = st.session_state.auth["school_id"]
 
-        students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+        students = run_query(
+            "SELECT * FROM students WHERE school_id=?",
+            (sid,), True
+        )
 
-        menu = st.sidebar.selectbox("Menu",
-            ["Students","Fees","Inventory","Care Logs","Gallery"])
+        menu = st.sidebar.selectbox(
+            "Menu",
+            ["Students","Fees","Inventory","Care Logs","Gallery"]
+        )
 
         # -------- STUDENTS --------
         if menu == "Students":
@@ -206,13 +254,13 @@ else:
                     st.success("Fee added!")
                     st.rerun()
 
-            fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
-
-            st.write("### Fee Records")
+            fees = run_query(
+                "SELECT * FROM fees WHERE school_id=?",
+                (sid,), True
+            )
 
             for f in fees:
                 col1, col2, col3, col4 = st.columns(4)
-
                 col1.write(f["student_name"])
                 col2.write(f["month"])
                 col3.write(f"₹{f['amount']}")
@@ -223,7 +271,6 @@ else:
                             "UPDATE fees SET status=?, payment_date=? WHERE id=?",
                             ("Paid", str(datetime.now()), f["id"])
                         )
-                        st.success("Payment recorded!")
                         st.rerun()
                 else:
                     col4.success("Paid")
@@ -265,8 +312,6 @@ else:
 
         # -------- GALLERY --------
         elif menu == "Gallery":
-            st.subheader("📸 Upload Photo")
-
             student_map = {s["name"]: s["id"] for s in students}
 
             st_name = st.selectbox("Student", list(student_map.keys()))
@@ -286,7 +331,7 @@ else:
                             sid
                         )
                     )
-                    st.success("Photo uploaded!")
+                    st.success("Uploaded!")
 
     # ================= PARENT =================
     elif st.session_state.auth["role"] == "parent":
@@ -300,21 +345,17 @@ else:
 
         st.title(f"👶 {student['name']}")
 
-        st.write("### Profile")
-        st.write(f"Blood Group: {student['blood']}")
-        st.write(f"Allergy: {student['allergy'] or 'None'}")
+        st.write(f"Blood: {student['blood']}")
 
-        # CARE LOGS
         logs = run_query(
             "SELECT * FROM care_logs WHERE student_id=?",
             (student_id,), True
         )
 
-        st.write("### Daily Logs")
+        st.write("### Logs")
         for l in logs:
             st.write(f"{l['activity']} - {l['time']}")
 
-        # FEES
         fees = run_query(
             "SELECT * FROM fees WHERE student_id=?",
             (student_id,), True
@@ -324,7 +365,6 @@ else:
         for f in fees:
             st.write(f"{f['month']} - ₹{f['amount']} - {f['status']}")
 
-        # GALLERY
         imgs = run_query(
             "SELECT * FROM gallery WHERE student_id=?",
             (student_id,), True
