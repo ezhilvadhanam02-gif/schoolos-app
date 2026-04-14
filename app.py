@@ -172,7 +172,20 @@ else:
                 phone = st.text_input("Parent Phone*")
                 ppass = st.text_input("Parent Password* (for login)")
                 
-                if st.form_submit_button("Add Student"):
+                if st.form_submit_button("Add Student"):import streamlit as st
+import sqlite3
+import uuid
+import os
+from datetime import datetime, timedelta
+
+st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
+
+# ---------------- RESET DB ----------------
+if st.sidebar.button("⚠️ Reset Database (Demo only)"):
+    if os.path.exists("schoolos.db"):
+        os.remove("schoolos.db")
+    st.success("Database reset! Refresh the app.")
+    st.stop()
                     if not name or not phone or not ppass:
                         st.error("Name, Phone & Password are required")
                     else:
