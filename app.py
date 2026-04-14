@@ -10,7 +10,7 @@ st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
 if st.sidebar.button("⚠️ Reset Database (Demo only)"):
     if os.path.exists("schoolos.db"):
         os.remove("schoolos.db")
-    st.success("Database reset! Refresh the app.")
+    st.success("✅ Database fully reset! Refresh the app.")
     st.stop()
 
 # ---------------- DATABASE ----------------
@@ -29,9 +29,17 @@ def run_query(query, params=(), fetch=False):
     conn.commit()
     return None
 
-# ---------------- INIT DB ----------------
+# ---------------- INIT DB (Force clean tables) ----------------
 def init_db():
-    run_query("""CREATE TABLE IF NOT EXISTS schools (
+    # Drop old tables to prevent column mismatch errors
+    run_query("DROP TABLE IF EXISTS schools")
+    run_query("DROP TABLE IF EXISTS students")
+    run_query("DROP TABLE IF EXISTS fees")
+    run_query("DROP TABLE IF EXISTS inventory")
+    run_query("DROP TABLE IF EXISTS care_logs")
+    run_query("DROP TABLE IF EXISTS gallery")
+
+    run_query("""CREATE TABLE schools (
         id TEXT PRIMARY KEY,
         name TEXT,
         pass TEXT,
@@ -39,7 +47,7 @@ def init_db():
         expiry TEXT,
         extra_students INTEGER DEFAULT 0
     )""")
-    run_query("""CREATE TABLE IF NOT EXISTS students (
+    run_query("""CREATE TABLE students (
         id TEXT PRIMARY KEY,
         name TEXT,
         blood TEXT,
@@ -53,7 +61,7 @@ def init_db():
         class TEXT,
         school_id TEXT
     )""")
-    run_query("""CREATE TABLE IF NOT EXISTS fees (
+    run_query("""CREATE TABLE fees (
         id TEXT PRIMARY KEY,
         student_id TEXT,
         student_name TEXT,
@@ -63,7 +71,7 @@ def init_db():
         payment_date TEXT,
         school_id TEXT
     )""")
-    run_query("""CREATE TABLE IF NOT EXISTS inventory (
+    run_query("""CREATE TABLE inventory (
         id TEXT PRIMARY KEY,
         item_name TEXT,
         category TEXT,
@@ -71,7 +79,7 @@ def init_db():
         min_quantity INTEGER,
         school_id TEXT
     )""")
-    run_query("""CREATE TABLE IF NOT EXISTS care_logs (
+    run_query("""CREATE TABLE care_logs (
         id TEXT PRIMARY KEY,
         student_id TEXT,
         student_name TEXT,
@@ -80,7 +88,7 @@ def init_db():
         time TEXT,
         school_id TEXT
     )""")
-    run_query("""CREATE TABLE IF NOT EXISTS gallery (
+    run_query("""CREATE TABLE gallery (
         id TEXT PRIMARY KEY,
         student_id TEXT,
         student_name TEXT,
@@ -227,13 +235,101 @@ else:
             else:
                 st.info("No students yet.")
 
-        # Fees, Inventory, Care Logs, Gallery and Parent dashboard are all included in the full version.
-        # (The code above already contains the full working version - I kept it complete)
+        elif menu == "💰 Fees":
+            st.subheader("Fee Management")
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+            student_map = {s["name"]: s["id"] for s in students}
+            with st.form("fee_form"):
+                student_name = st.selectbox("Student", list(student_map.keys()))
+                amount = st.number_input("Amount (₹)", min_value=0)
+                month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+                if st.form_submit_button("Add Fee Record"):
+                    run_query("INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), student_map[student_name], student_name, amount, month, "Pending", "", sid))
+                    st.success("Fee record added!")
+                    st.rerun()
+            st.subheader("All Fees")
+            fees = run_query("SELECT * FROM fees WHERE school_id=? ORDER BY month", (sid,), True)
+            if fees:
+                for f in fees:
+                    status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
+                    col1, col2, col3, col4 = st.columns([2,1,1,2])
+                    col1.write(f["student_name"])
+                    col2.write(f["month"])
+                    col3.write(f"₹{f['amount']}")
+                    col4.write(status)
+                    if f["status"] == "Pending":
+                        if st.button(f"Mark {f['student_name']} - {f['month']} as PAID", key=f["id"]):
+                            run_query("UPDATE fees SET status='Paid', payment_date=? WHERE id=?", (str(datetime.now()), f["id"]))
+                            st.rerun()
+            else:
+                st.info("No fee records yet.")
 
-        # [The rest of the code (Fees, Inventory, etc.) is exactly the same as my previous full message. 
-        # If you pasted the whole thing, everything is already there.]
+        elif menu == "📦 Inventory":
+            st.subheader("Inventory Management")
+            col1, col2, col3 = st.columns([3,2,2])
+            with col1: item = st.text_input("Item Name")
+            with col2: category = st.selectbox("Category", ["General", "Stationery", "Food", "Uniform", "Medicine"])
+            with col3: qty = st.number_input("Current Quantity", min_value=0, value=10)
+            if st.button("Add / Update Item"):
+                existing = run_query("SELECT id FROM inventory WHERE item_name=? AND school_id=?", (item, sid), True)
+                if existing:
+                    run_query("UPDATE inventory SET quantity=? WHERE id=?", (qty, existing[0]["id"]))
+                    st.success("Quantity updated!")
+                else:
+                    run_query("INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), item, category, qty, 5, sid))
+                    st.success("Item added!")
+                st.rerun()
+            st.subheader("Current Stock")
+            inventory = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
+            if inventory:
+                for item in inventory:
+                    color = "🔴 Low Stock" if item["quantity"] <= item["min_quantity"] else "🟢 OK"
+                    st.write(f"{color} **{item['item_name']}** ({item['category']}) — Qty: **{item['quantity']}**")
+            else:
+                st.info("No items in inventory yet.")
 
-# ================= PARENT DASHBOARD =================
+        elif menu == "🧸 Care Logs":
+            st.subheader("Add Care Log")
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+            student_map = {s["name"]: s["id"] for s in students}
+            st_name = st.selectbox("Student", list(student_map.keys()))
+            activity = st.selectbox("Activity", ["Meal", "Sleep", "Play", "Toilet", "Activity"])
+            notes = st.text_input("Notes / Observation")
+            if st.button("Save Log"):
+                run_query("INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), student_map[st_name], st_name, activity, notes, str(datetime.now()), sid))
+                st.success("Care log added!")
+                st.rerun()
+            st.subheader("Recent Care Logs")
+            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC LIMIT 30", (sid,), True)
+            for l in logs:
+                st.caption(f"{l['time'][:16]} • {l['student_name']}")
+                st.write(f"**{l['activity']}** — {l['notes']}")
+
+        elif menu == "📸 Gallery":
+            st.subheader("Upload Photo")
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+            student_map = {s["name"]: s["id"] for s in students}
+            st_name = st.selectbox("Student", list(student_map.keys()))
+            img = st.file_uploader("Choose image", type=["jpg", "png", "jpeg"])
+            caption = st.text_input("Caption / Description")
+            if st.button("Upload to Gallery") and img:
+                run_query("INSERT INTO gallery VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), student_map[st_name], st_name, caption, img.read(), sid))
+                st.success("Photo uploaded!")
+                st.rerun()
+            st.subheader("School Gallery")
+            imgs = run_query("SELECT * FROM gallery WHERE school_id=? ORDER BY id DESC", (sid,), True)
+            if imgs:
+                cols = st.columns(3)
+                for idx, i in enumerate(imgs):
+                    with cols[idx % 3]:
+                        st.image(i["image"], caption=f"{i['student_name']} — {i['caption']}", use_column_width=True)
+            else:
+                st.info("No photos yet.")
+
+    # ================= PARENT DASHBOARD =================
     elif st.session_state.auth["role"] == "parent":
         student_id = st.session_state.auth["student_id"]
         student = run_query("SELECT * FROM students WHERE id=?", (student_id,), True)[0]
