@@ -2,9 +2,15 @@ import streamlit as st
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
+from fpdf import FPDF
+import os
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="SchoolOS Pro", layout="wide")
+
+# Create folders
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("receipts", exist_ok=True)
 
 # ---------------- DATABASE ----------------
 @st.cache_resource
@@ -20,6 +26,28 @@ def run_query(query, params=(), fetch=False):
     if fetch:
         return cur.fetchall()
     conn.commit()
+
+# ---------------- PDF ----------------
+def generate_receipt(student, amount, month, date):
+    pdf = FPDF()
+    pdf.add_page()
+
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(200, 10, "School Fee Receipt", ln=True, align="C")
+
+    pdf.set_font("Arial", size=12)
+    pdf.ln(10)
+
+    pdf.cell(200, 10, f"Student: {student}", ln=True)
+    pdf.cell(200, 10, f"Month: {month}", ln=True)
+    pdf.cell(200, 10, f"Amount Paid: ₹{amount}", ln=True)
+    pdf.cell(200, 10, f"Date: {date}", ln=True)
+
+    filename = f"receipt_{uuid.uuid4().hex}.pdf"
+    path = os.path.join("receipts", filename)
+    pdf.output(path)
+
+    return path
 
 # ---------------- INIT DB ----------------
 def init_db():
@@ -199,18 +227,15 @@ else:
 
         st.title(f"🏫 {school['name']}")
 
-        base = PLAN_LIMITS[school["plan"]]
-        max_students = base if base == float("inf") else base + (school["extra_students"] * 50)
-
         students = run_query(
             "SELECT * FROM students WHERE school_id=?",
             (sid,),
             fetch=True
         )
 
-        st.sidebar.info(f"Plan: {school['plan']}\nStudents: {len(students)} / {max_students}")
+        st.sidebar.info(f"Plan: {school['plan']} | Students: {len(students)}")
 
-        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Fees", "Upgrade"])
+        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Fees"])
 
         # DASHBOARD
         if menu == "Dashboard":
@@ -223,38 +248,49 @@ else:
             with st.form("add_student"):
                 name = st.text_input("Name")
                 blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
-                allergy = st.text_input("Allergies")
                 parent_name = st.text_input("Parent Name")
                 parent_phone = st.text_input("Parent Phone")
-                likes = st.text_input("Likes")
-                dislikes = st.text_input("Dislikes")
-                siblings = st.text_input("Siblings")
                 student_class = st.text_input("Class")
+                photo = st.file_uploader("Upload Photo", type=["jpg","png"])
 
                 if st.form_submit_button("Add"):
+                    photo_path = ""
+                    if photo:
+                        path = f"uploads/{uuid.uuid4().hex}.png"
+                        with open(path, "wb") as f:
+                            f.write(photo.read())
+                        photo_path = path
+
                     run_query(
                         "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
-                            str(uuid.uuid4()), name, blood, allergy,
+                            str(uuid.uuid4()), name, blood, "",
                             parent_name, parent_phone,
-                            likes, dislikes, siblings,
-                            student_class, "", sid
+                            "", "", "",
+                            student_class, photo_path, sid
                         )
                     )
                     st.success("Added!")
                     st.rerun()
 
             for s in students:
-                st.write(f"👶 {s['name']} | {s['blood']} | Parent: {s['parent_name']}")
+                col1, col2 = st.columns([1,4])
+
+                if s["photo"]:
+                    col1.image(s["photo"], width=60)
+                else:
+                    col1.write("👤")
+
+                col2.write(f"{s['name']} | {s['class']} | Parent: {s['parent_name']}")
 
         # FEES
         elif menu == "Fees":
             st.subheader("Fee Management")
 
-            student_names = [s["name"] for s in students]
+            names = [s["name"] for s in students]
 
             with st.form("fee"):
-                st_name = st.selectbox("Student", student_names)
+                st_name = st.selectbox("Student", names)
                 amt = st.number_input("Amount", 0)
                 month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
 
@@ -282,13 +318,21 @@ else:
                             ("Paid", str(datetime.now()), f["id"])
                         )
 
+                        receipt = generate_receipt(
+                            f["student_name"],
+                            f["amount"],
+                            f["month"],
+                            str(datetime.now())
+                        )
+
+                        with open(receipt, "rb") as file:
+                            st.download_button(
+                                "📄 Download Receipt",
+                                file,
+                                "receipt.pdf"
+                            )
+
                         st.success("Payment done!")
-                        st.info(f"Receipt: {f['student_name']} paid ₹{f['amount']}")
                         st.rerun()
                 else:
                     col4.success("Paid")
-
-        # UPGRADE
-        elif menu == "Upgrade":
-            for p, price in PLAN_PRICES.items():
-                st.write(f"{p} - ₹{price}")
