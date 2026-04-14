@@ -52,6 +52,19 @@ def init_db():
     )
     """)
 
+    run_query("""
+    CREATE TABLE IF NOT EXISTS fees (
+        id TEXT PRIMARY KEY,
+        student_id TEXT,
+        student_name TEXT,
+        amount INTEGER,
+        month TEXT,
+        status TEXT,
+        payment_date TEXT,
+        school_id TEXT
+    )
+    """)
+
 init_db()
 
 # ---------------- PRICING ----------------
@@ -68,9 +81,6 @@ PLAN_PRICES = {
     "Premium": 7999,
     "Enterprise": 9999
 }
-
-ADDON_PRICE_50 = 500
-ADDON_PRICE_100 = 900
 
 # ---------------- SESSION ----------------
 if "auth" not in st.session_state:
@@ -204,9 +214,9 @@ Plan: {school['plan']}
 Students: {len(students)} / {max_students}
         """)
 
-        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Upgrade"])
+        menu = st.sidebar.selectbox("Menu", ["Dashboard", "Students", "Fees", "Upgrade"])
 
-        # ---- DASHBOARD ----
+        # -------- DASHBOARD --------
         if menu == "Dashboard":
             st.metric("Students", len(students))
             st.metric("Plan", school["plan"])
@@ -223,7 +233,7 @@ Students: {len(students)} / {max_students}
                 else:
                     st.warning(msg)
 
-        # ---- STUDENTS ----
+        # -------- STUDENTS --------
         elif menu == "Students":
 
             with st.form("add_student"):
@@ -262,7 +272,69 @@ Students: {len(students)} / {max_students}
                     run_query("DELETE FROM students WHERE id=?", (s["id"],))
                     st.rerun()
 
-        # ---- UPGRADE ----
+        # -------- FEES --------
+        elif menu == "Fees":
+            st.subheader("💰 Fee Management")
+
+            student_map = {s["name"]: s["id"] for s in students}
+
+            with st.form("fee_form"):
+                student_name = st.selectbox("Student", list(student_map.keys()))
+                amount = st.number_input("Amount", min_value=0)
+                month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+
+                if st.form_submit_button("Add Fee"):
+                    run_query(
+                        "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            student_map[student_name],
+                            student_name,
+                            amount,
+                            month,
+                            "Pending",
+                            "",
+                            sid
+                        )
+                    )
+                    st.success("Fee added!")
+                    st.rerun()
+
+            fees = run_query(
+                "SELECT * FROM fees WHERE school_id=?",
+                (sid,),
+                fetch=True
+            )
+
+            total = 0
+            pending = 0
+
+            for f in fees:
+                col1, col2, col3, col4 = st.columns([2,2,2,1])
+
+                col1.write(f["student_name"])
+                col2.write(f"₹{f['amount']}")
+                col3.write(f["month"])
+
+                if f["status"] == "Pending":
+                    if col4.button("Mark Paid", key=f["id"]):
+                        run_query(
+                            "UPDATE fees SET status=?, payment_date=? WHERE id=?",
+                            ("Paid", str(datetime.now()), f["id"])
+                        )
+                        st.rerun()
+                else:
+                    col4.success("Paid")
+
+                total += f["amount"]
+                if f["status"] == "Pending":
+                    pending += f["amount"]
+
+            st.divider()
+            st.metric("Total Fees", f"₹{total}")
+            st.metric("Pending Fees", f"₹{pending}")
+
+        # -------- UPGRADE --------
         elif menu == "Upgrade":
 
             for p, price in PLAN_PRICES.items():
