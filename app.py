@@ -1,4 +1,4 @@
-# ================= SCHOOLOS PRO - PHASE 2 (FINAL MERGED + STABLE) =================
+# ================= SCHOOLOS PRO - PHASE 2 (FINAL STABLE BUILD) =================
 
 import streamlit as st
 import sqlite3
@@ -18,19 +18,29 @@ def verify_password(password, hashed):
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 # ---------------- DATABASE ----------------
-@st.cache_resource
 def get_db():
-    conn = sqlite3.connect("schoolos.db", check_same_thread=False, timeout=10)
+    conn = sqlite3.connect("schoolos.db", timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
 def run_query(query, params=(), fetch=False):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(query, params)
-    if fetch:
-        return cur.fetchall()
-    conn.commit()
+
+    try:
+        cur.execute(query, params)
+
+        if fetch:
+            result = cur.fetchall()
+            conn.close()
+            return result
+
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        conn.close()
+        raise e
 
 # ---------------- INIT DB ----------------
 def init_db():
@@ -115,7 +125,7 @@ def init_db():
     )
     """)
 
-    # Performance indexes
+    # Indexes
     run_query("CREATE INDEX IF NOT EXISTS idx_students_school ON students(school_id)")
     run_query("CREATE INDEX IF NOT EXISTS idx_fees_school ON fees(school_id)")
     run_query("CREATE INDEX IF NOT EXISTS idx_logs_school ON care_logs(school_id)")
@@ -174,7 +184,7 @@ else:
         st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
         st.rerun()
 
-    # ================= ADMIN =================
+    # ADMIN
     if st.session_state.auth["role"] == "admin":
         st.title("👑 Admin Dashboard")
 
@@ -232,7 +242,7 @@ else:
             st.metric("Active Schools", active)
             st.metric("Revenue", f"₹{revenue}")
 
-    # ================= SCHOOL =================
+    # SCHOOL
     else:
         sid = st.session_state.auth["school_id"]
 
@@ -253,23 +263,16 @@ else:
         base = PLAN_LIMITS[school["plan"]]
         max_students = base if base == float("inf") else base + (school["extra_students"] * 50)
 
-        students = run_query(
-            "SELECT * FROM students WHERE school_id=?",
-            (sid,),
-            fetch=True
-        )
+        students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
 
-        st.sidebar.info(f"""
-Plan: {school['plan']}
-Students: {len(students)} / {max_students}
-        """)
+        st.sidebar.info(f"Plan: {school['plan']}\nStudents: {len(students)}/{max_students}")
 
         menu = st.sidebar.selectbox(
             "Menu",
             ["Dashboard", "Students", "Fees", "Inventory", "Care Logs", "Upgrade"]
         )
 
-        # -------- DASHBOARD --------
+        # DASHBOARD
         if menu == "Dashboard":
             fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
             paid = sum(f["amount"] for f in fees if f["status"] == "Paid")
@@ -281,7 +284,7 @@ Students: {len(students)} / {max_students}
             col3.metric("Pending Fees", f"₹{pending}")
             st.caption(f"Plan Limit: {max_students}")
 
-        # -------- STUDENTS --------
+        # STUDENTS
         elif menu == "Students":
             st.subheader("Student Profiles")
 
@@ -302,7 +305,7 @@ Students: {len(students)} / {max_students}
                     elif not parent_phone.isdigit() or len(parent_phone) < 10:
                         st.error("Invalid phone number")
                     elif len(students) >= max_students:
-                        st.error("Student limit reached! Upgrade plan.")
+                        st.error("Student limit reached")
                     else:
                         run_query(
                             "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -319,7 +322,7 @@ Students: {len(students)} / {max_students}
             for s in students:
                 st.write(f"👶 {s['name']} | {s['blood']} | Parent: {s['parent_name']}")
 
-        # -------- FEES --------
+        # FEES
         elif menu == "Fees":
             st.subheader("Fee Management")
 
@@ -372,7 +375,7 @@ Students: {len(students)} / {max_students}
                 else:
                     col4.success("Paid")
 
-        # -------- INVENTORY --------
+        # INVENTORY
         elif menu == "Inventory":
             st.subheader("📦 Inventory")
 
@@ -397,7 +400,7 @@ Students: {len(students)} / {max_students}
                 if i["quantity"] <= i["min_quantity"]:
                     st.error("Low Stock!")
 
-        # -------- CARE LOGS --------
+        # CARE LOGS
         elif menu == "Care Logs":
             st.subheader("👶 Care Logs")
 
@@ -429,7 +432,7 @@ Students: {len(students)} / {max_students}
             for l in logs:
                 st.write(f"{l['student_name']} | {l['activity']} | {l['notes']}")
 
-        # -------- UPGRADE --------
+        # UPGRADE
         elif menu == "Upgrade":
             for p, price in PLAN_PRICES.items():
                 if st.button(f"Upgrade to {p} - ₹{price}"):
