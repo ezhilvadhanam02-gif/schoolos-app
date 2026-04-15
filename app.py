@@ -1,5 +1,3 @@
-# ================= SCHOOLOS PRO - PHASE 2 (FINAL STABLE BUILD) =================
-
 import streamlit as st
 import sqlite3
 import uuid
