@@ -4,9 +4,12 @@ import uuid
 from datetime import datetime, timedelta
 import bcrypt
 from fpdf import FPDF
+from io import BytesIO
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="SchoolOS Pro", layout="wide")
+
+DB_PATH = "schoolos.db"
 
 # ---------------- SECURITY ----------------
 def hash_password(password):
@@ -17,14 +20,18 @@ def verify_password(password, hashed):
 
 # ---------------- DATABASE ----------------
 def get_db():
-    conn = sqlite3.connect("schoolos.db", timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+
+    # 🔥 Critical fixes for SQLite stability
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+
     return conn
 
 def run_query(query, params=(), fetch=False):
     conn = get_db()
     cur = conn.cursor()
-
     try:
         cur.execute(query, params)
 
@@ -34,11 +41,13 @@ def run_query(query, params=(), fetch=False):
             return result
 
         conn.commit()
-        conn.close()
-
     except Exception as e:
+        conn.rollback()
         conn.close()
-        raise e
+        st.error(f"Database error: {str(e)}")
+        return []
+    finally:
+        conn.close()
 
 # ---------------- INIT DB ----------------
 def init_db():
@@ -131,7 +140,7 @@ def init_db():
 init_db()
 
 # ---------------- RECEIPT ----------------
-def generate_receipt(name, amount):
+def generate_receipt_bytes(name, amount):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -140,9 +149,10 @@ def generate_receipt(name, amount):
     pdf.cell(200, 10, f"Student: {name}", ln=True)
     pdf.cell(200, 10, f"Amount Paid: ₹{amount}", ln=True)
 
-    file = f"{name}_receipt.pdf"
-    pdf.output(file)
-    return file
+    buffer = BytesIO()
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
 # ---------------- PLANS ----------------
 PLAN_LIMITS = {"Basic": 30, "Standard": 80, "Premium": 500, "Enterprise": float("inf")}
@@ -182,7 +192,7 @@ else:
         st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
         st.rerun()
 
-    # ADMIN
+    # ================= ADMIN =================
     if st.session_state.auth["role"] == "admin":
         st.title("👑 Admin Dashboard")
 
@@ -240,7 +250,7 @@ else:
             st.metric("Active Schools", active)
             st.metric("Revenue", f"₹{revenue}")
 
-    # SCHOOL
+    # ================= SCHOOL =================
     else:
         sid = st.session_state.auth["school_id"]
 
@@ -270,7 +280,7 @@ else:
             ["Dashboard", "Students", "Fees", "Inventory", "Care Logs", "Upgrade"]
         )
 
-        # DASHBOARD
+        # -------- DASHBOARD --------
         if menu == "Dashboard":
             fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
             paid = sum(f["amount"] for f in fees if f["status"] == "Paid")
@@ -282,7 +292,7 @@ else:
             col3.metric("Pending Fees", f"₹{pending}")
             st.caption(f"Plan Limit: {max_students}")
 
-        # STUDENTS
+        # -------- STUDENTS --------
         elif menu == "Students":
             st.subheader("Student Profiles")
 
@@ -300,10 +310,10 @@ else:
                 if st.form_submit_button("Add Student"):
                     if not name or not parent_name or not parent_phone:
                         st.error("Required fields missing")
-                    elif not parent_phone.isdigit() or len(parent_phone) < 10:
-                        st.error("Invalid phone number")
+                    elif not parent_phone.isdigit():
+                        st.error("Invalid phone")
                     elif len(students) >= max_students:
-                        st.error("Student limit reached")
+                        st.error("Limit reached")
                     else:
                         run_query(
                             "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -320,11 +330,11 @@ else:
             for s in students:
                 st.write(f"👶 {s['name']} | {s['blood']} | Parent: {s['parent_name']}")
 
-        # FEES
+        # -------- FEES --------
         elif menu == "Fees":
             st.subheader("Fee Management")
 
-            student_map = {f"{s['name']} ({s['id'][:4]})": s["id"] for s in students}
+            student_map = {s["name"]: s["id"] for s in students}
 
             with st.form("fee_form"):
                 student_name = st.selectbox("Student", list(student_map.keys()))
@@ -364,16 +374,20 @@ else:
                             ("Paid", str(datetime.now()), f["id"])
                         )
 
-                        file = generate_receipt(f["student_name"], f["amount"])
-                        with open(file, "rb") as fobj:
-                            st.download_button("Download Receipt", fobj, file_name=file)
+                        pdf = generate_receipt_bytes(f["student_name"], f["amount"])
+
+                        st.download_button(
+                            "Download Receipt",
+                            pdf,
+                            file_name=f"{f['student_name']}_receipt.pdf"
+                        )
 
                         st.success("Payment done!")
                         st.rerun()
                 else:
                     col4.success("Paid")
 
-        # INVENTORY
+        # -------- INVENTORY --------
         elif menu == "Inventory":
             st.subheader("📦 Inventory")
 
@@ -398,11 +412,11 @@ else:
                 if i["quantity"] <= i["min_quantity"]:
                     st.error("Low Stock!")
 
-        # CARE LOGS
+        # -------- CARE LOGS --------
         elif menu == "Care Logs":
             st.subheader("👶 Care Logs")
 
-            student_map = {f"{s['name']} ({s['id'][:4]})": s["id"] for s in students}
+            student_map = {s["name"]: s["id"] for s in students}
 
             with st.form("log"):
                 st_name = st.selectbox("Student", list(student_map.keys()))
@@ -430,7 +444,7 @@ else:
             for l in logs:
                 st.write(f"{l['student_name']} | {l['activity']} | {l['notes']}")
 
-        # UPGRADE
+        # -------- UPGRADE --------
         elif menu == "Upgrade":
             for p, price in PLAN_PRICES.items():
                 if st.button(f"Upgrade to {p} - ₹{price}"):
