@@ -4,44 +4,24 @@ import uuid
 import os
 from datetime import datetime, timedelta
 from io import BytesIO
-from pathlib import Path
-
-# ====================== SENIOR DEVELOPER NOTES ======================
-# This is the FINAL STABLE version of SchoolOS Pro.
-# What I did to make it STABLE and PRODUCTION-READY:
-# 1. DB is now saved in YOUR HOME FOLDER → no more "readonly database" error
-# 2. Proper connection handling with timeout + error catching
-# 3. Safe BLOB image rendering using BytesIO
-# 4. Full try/except around every database operation
-# 5. Clean session state management
-# 6. Works both LOCALLY and on Streamlit Community Cloud (DB resets on Cloud redeploy)
-# 7. Clean, modular, well-commented code
-# 8. Ready for future scaling (you can easily switch to Supabase/Postgres later)
-# ===================================================================
 
 st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
 
-# ---------------- STABLE DATABASE PATH (FIXES READONLY ERROR) ----------------
-DB_PATH = str(Path.home() / "schoolos.db")   # ← Saved in your home folder (always writable)
-
-st.sidebar.caption(f"📍 DB Location: {DB_PATH}")
-
-# ---------------- RESET DATABASE ----------------
-if st.sidebar.button("⚠️ Reset Database (Demo only)", type="secondary"):
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+# ---------------- RESET DATABASE (Demo only) ----------------
+if st.sidebar.button("⚠️ Reset Database (Demo only)"):
+    if os.path.exists("schoolos.db"):
+        os.remove("schoolos.db")
     st.success("✅ Database fully reset! Please refresh the page.")
-    st.rerun()
+    st.stop()
 
-# ---------------- STABLE DATABASE CONNECTION ----------------
+# ---------------- DATABASE CONNECTION ----------------
 @st.cache_resource
 def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=60)
+    conn = sqlite3.connect("schoolos.db", check_same_thread=False, timeout=20)
     conn.row_factory = sqlite3.Row
     return conn
 
 def run_query(query, params=(), fetch=False):
-    """Safe query runner - used everywhere"""
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -57,43 +37,37 @@ def run_query(query, params=(), fetch=False):
     finally:
         cur.close()
 
-# ---------------- INIT DATABASE (Run once) ----------------
+# ---------------- INIT DATABASE ----------------
 def init_db():
-    run_query("DROP TABLE IF EXISTS schools")
-    run_query("DROP TABLE IF EXISTS students")
-    run_query("DROP TABLE IF EXISTS fees")
-    run_query("DROP TABLE IF EXISTS inventory")
-    run_query("DROP TABLE IF EXISTS care_logs")
-    run_query("DROP TABLE IF EXISTS gallery")
-
-    run_query("""CREATE TABLE schools (
+    # Changed to IF NOT EXISTS so data persists across Streamlit reruns
+    run_query("""CREATE TABLE IF NOT EXISTS schools (
         id TEXT PRIMARY KEY, name TEXT, pass TEXT, plan TEXT, 
         expiry TEXT, extra_students INTEGER DEFAULT 0
     )""")
 
-    run_query("""CREATE TABLE students (
+    run_query("""CREATE TABLE IF NOT EXISTS students (
         id TEXT PRIMARY KEY, name TEXT, blood TEXT, allergy TEXT,
         parent_name TEXT, parent_phone TEXT, parent_pass TEXT,
         likes TEXT, dislikes TEXT, siblings TEXT, class TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE fees (
+    run_query("""CREATE TABLE IF NOT EXISTS fees (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT, 
         amount INTEGER, month TEXT, status TEXT, 
         payment_date TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE inventory (
+    run_query("""CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY, item_name TEXT, category TEXT, 
         quantity INTEGER, min_quantity INTEGER, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE care_logs (
+    run_query("""CREATE TABLE IF NOT EXISTS care_logs (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
         activity TEXT, notes TEXT, time TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE gallery (
+    run_query("""CREATE TABLE IF NOT EXISTS gallery (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
         caption TEXT, image BLOB, school_id TEXT
     )""")
@@ -103,13 +77,13 @@ init_db()
 # ---------------- SESSION STATE ----------------
 if "auth" not in st.session_state:
     st.session_state.auth = {
-        "logged_in": False,
-        "role": None,
-        "school_id": None,
+        "logged_in": False, 
+        "role": None, 
+        "school_id": None, 
         "student_id": None
     }
 
-# ---------------- LOGIN ----------------
+# ---------------- LOGIN PAGE ----------------
 if not st.session_state.auth["logged_in"]:
     st.title("🏫 SchoolOS Pro")
     st.markdown("### Welcome! Login to continue")
@@ -120,12 +94,10 @@ if not st.session_state.auth["logged_in"]:
 
     if st.button("🔑 Login", type="primary", use_container_width=True):
         if role == "School/Admin":
-            # Super admin
             if user == "admin" and pw == "admin123":
                 st.session_state.auth = {"logged_in": True, "role": "admin"}
                 st.rerun()
 
-            # Normal school login
             school = run_query("SELECT * FROM schools WHERE id=? AND pass=?", (user, pw), True)
             if school:
                 school = school[0]
@@ -133,15 +105,15 @@ if not st.session_state.auth["logged_in"]:
                     expiry_date = datetime.strptime(school["expiry"], "%Y-%m-%d")
                     if datetime.now() < expiry_date:
                         st.session_state.auth = {
-                            "logged_in": True,
-                            "role": "school",
+                            "logged_in": True, 
+                            "role": "school", 
                             "school_id": user
                         }
                         st.rerun()
                     else:
                         st.error("Your school subscription has expired!")
                 except:
-                    st.error("Invalid expiry date in database.")
+                    st.error("Invalid expiry date.")
             else:
                 st.error("Invalid School ID or Password.")
 
@@ -184,7 +156,7 @@ else:
                 try:
                     run_query("INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
                               (sid, name, pw, plan, expiry, 0))
-                    st.success(f"✅ School **{name}** created successfully!")
+                    st.success(f"✅ School **{name}** created!")
                     st.rerun()
                 except sqlite3.IntegrityError:
                     st.error("School ID already exists!")
@@ -192,7 +164,7 @@ else:
                 st.error("All fields are required!")
 
         st.subheader("Registered Schools")
-        schools = run_query("SELECT id, name, plan, expiry FROM schools ORDER BY name", fetch=True) or []
+        schools = run_query("SELECT id, name, plan, expiry FROM schools ORDER BY name", fetch=True)
         if schools:
             for s in schools:
                 st.write(f"**{s['name']}** ({s['id']}) — {s['plan']} | Expires: {s['expiry']}")
@@ -212,14 +184,13 @@ else:
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Students", total_students)
         col2.metric("Pending Fees", pending_fees)
-        col3.metric("Low Stock Items", low_stock)
+        col3.metric("Low Stock", low_stock)
 
         menu = st.sidebar.selectbox(
             "Menu", 
             ["📋 Students", "💰 Fees", "📦 Inventory", "🧸 Care Logs", "📸 Gallery"]
         )
 
-        # Students Section
         if menu == "📋 Students":
             st.subheader("Add New Student")
             with st.form("add_student"):
@@ -241,13 +212,13 @@ else:
                         run_query("""INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (str(uuid.uuid4()), name, blood, allergy, parent_name, parent_phone, 
                              parent_pass or "1234", likes, dislikes, "", class_, sid))
-                        st.success("✅ Student added!")
+                        st.success("Student added successfully!")
                         st.rerun()
                     else:
                         st.error("Name, Parent & Phone are required")
 
             st.subheader("All Students")
-            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
             if students:
                 for s in students:
                     with st.expander(f"👦 {s['name']} • {s['class']}"):
@@ -256,7 +227,6 @@ else:
             else:
                 st.info("No students yet.")
 
-        # Fees Section
         elif menu == "💰 Fees":
             st.subheader("Fee Management")
             students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
@@ -273,7 +243,7 @@ else:
                     st.rerun()
 
             st.subheader("All Fees")
-            fees = run_query("SELECT * FROM fees WHERE school_id=? ORDER BY month", (sid,), True) or []
+            fees = run_query("SELECT * FROM fees WHERE school_id=? ORDER BY month", (sid,), True)
             if fees:
                 for f in fees:
                     status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
@@ -290,7 +260,6 @@ else:
             else:
                 st.info("No fee records yet.")
 
-        # Inventory Section
         elif menu == "📦 Inventory":
             st.subheader("Inventory Management")
             col1, col2, col3 = st.columns([3,2,2])
@@ -298,19 +267,20 @@ else:
             with col2: category = st.selectbox("Category", ["General", "Stationery", "Food", "Uniform", "Medicine"])
             with col3: qty = st.number_input("Current Quantity", min_value=0, value=10)
 
-            if st.button("Add / Update Item") and item:
-                existing = run_query("SELECT id FROM inventory WHERE item_name=? AND school_id=?", (item, sid), True)
-                if existing:
-                    run_query("UPDATE inventory SET quantity=? WHERE id=?", (qty, existing[0]["id"]))
-                    st.success("Quantity updated!")
-                else:
-                    run_query("INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)", 
-                              (str(uuid.uuid4()), item, category, qty, 5, sid))
-                    st.success("Item added!")
-                st.rerun()
+            if st.button("Add / Update Item"):
+                if item:
+                    existing = run_query("SELECT id FROM inventory WHERE item_name=? AND school_id=?", (item, sid), True)
+                    if existing:
+                        run_query("UPDATE inventory SET quantity=? WHERE id=?", (qty, existing[0]["id"]))
+                        st.success("Quantity updated!")
+                    else:
+                        run_query("INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)", 
+                                  (str(uuid.uuid4()), item, category, qty, 5, sid))
+                        st.success("Item added!")
+                    st.rerun()
 
             st.subheader("Current Stock")
-            inventory = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True) or []
+            inventory = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
             if inventory:
                 for item in inventory:
                     color = "🔴 Low Stock" if item["quantity"] <= item["min_quantity"] else "🟢 OK"
@@ -318,7 +288,6 @@ else:
             else:
                 st.info("No items in inventory yet.")
 
-        # Care Logs Section
         elif menu == "🧸 Care Logs":
             st.subheader("Add Care Log")
             students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
@@ -334,12 +303,11 @@ else:
                 st.rerun()
 
             st.subheader("Recent Care Logs")
-            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC LIMIT 30", (sid,), True) or []
-            for l in logs:
+            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC LIMIT 30", (sid,), True)
+            for l in logs or []:
                 st.caption(f"{l['time'][:16]} • {l['student_name']}")
                 st.write(f"**{l['activity']}** — {l['notes']}")
 
-        # Gallery Section
         elif menu == "📸 Gallery":
             st.subheader("Upload Photo")
             students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
@@ -356,16 +324,18 @@ else:
                 st.rerun()
 
             st.subheader("School Gallery")
-            imgs = run_query("SELECT * FROM gallery WHERE school_id=? ORDER BY id DESC", (sid,), True) or []
+            imgs = run_query("SELECT * FROM gallery WHERE school_id=? ORDER BY id DESC", (sid,), True)
             if imgs:
                 cols = st.columns(3)
                 for idx, i in enumerate(imgs):
                     with cols[idx % 3]:
                         try:
                             if i["image"]:
-                                st.image(BytesIO(i["image"]), caption=f"{i['student_name']} — {i['caption']}", use_column_width=True)
-                        except:
-                            st.error("Cannot display image")
+                                st.image(BytesIO(i["image"]), caption=f"{i['student_name']} — {i['caption']}", use_container_width=True)
+                            else:
+                                st.info("No image data")
+                        except Exception as e:
+                            st.error(f"Cannot display image: {e}")
             else:
                 st.info("No photos yet.")
 
@@ -374,7 +344,7 @@ else:
         student_id = st.session_state.auth["student_id"]
         student_row = run_query("SELECT * FROM students WHERE id=?", (student_id,), True)
         if not student_row:
-            st.error("Student not found!")
+            st.error("Student record not found!")
             st.stop()
         student = student_row[0]
 
@@ -384,28 +354,28 @@ else:
             st.warning(f"⚠️ Allergy: {student['allergy']}")
 
         st.subheader("🧸 Recent Care Logs")
-        logs = run_query("SELECT * FROM care_logs WHERE student_id=? ORDER BY time DESC LIMIT 10", (student_id,), True) or []
-        for l in logs:
+        logs = run_query("SELECT * FROM care_logs WHERE student_id=? ORDER BY time DESC LIMIT 10", (student_id,), True)
+        for l in logs or []:
             st.write(f"**{l['activity']}** — {l['notes']} • {l['time'][:16]}")
 
         st.subheader("💰 Fees")
-        fees = run_query("SELECT * FROM fees WHERE student_id=? ORDER BY month", (student_id,), True) or []
-        for f in fees:
+        fees = run_query("SELECT * FROM fees WHERE student_id=? ORDER BY month", (student_id,), True)
+        for f in fees or []:
             status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
             st.write(f"{f['month']} — ₹{f['amount']} — {status}")
 
         st.subheader("📸 Gallery")
-        imgs = run_query("SELECT * FROM gallery WHERE student_id=? ORDER BY id DESC", (student_id,), True) or []
+        imgs = run_query("SELECT * FROM gallery WHERE student_id=? ORDER BY id DESC", (student_id,), True)
         if imgs:
             for i in imgs:
                 try:
                     if i["image"]:
-                        st.image(BytesIO(i["image"]), caption=i["caption"], use_column_width=True)
-                except:
-                    st.error("Cannot display image")
+                        st.image(BytesIO(i["image"]), caption=i["caption"], use_container_width=True)
+                except Exception as e:
+                    st.error(f"Cannot display image: {e}")
         else:
             st.info("No photos yet.")
 
 # Footer
 st.sidebar.markdown("---")
-st.sidebar.caption("SchoolOS Pro v2.0 • Stable & Ready • Built as Senior Developer")
+st.sidebar.caption("SchoolOS Pro - Built with Streamlit + SQLite")
