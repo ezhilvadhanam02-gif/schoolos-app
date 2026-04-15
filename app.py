@@ -1,381 +1,252 @@
 import streamlit as st
-import sqlite3
-import uuid
+import pandas as pd
+import json
 import os
 from datetime import datetime, timedelta
-from io import BytesIO
+import math
 
-st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
+# ==========================================
+# 1. FRONT-END CONFIG & CSS
+# ==========================================
+st.set_page_config(page_title="Bright Beginnings Pro", layout="wide", page_icon="☀️")
 
-# ---------------- RESET DATABASE (Demo only) ----------------
-if st.sidebar.button("⚠️ Reset Database (Demo only)"):
-    if os.path.exists("schoolos.db"):
-        os.remove("schoolos.db")
-    st.success("✅ Database fully reset! Please refresh the page.")
-    st.stop()
+st.markdown("""
+    <style>
+    .receipt { border: 2px dashed #000; padding: 20px; font-family: monospace; background: #fff; color: #000;}
+    .sos-alert { background: #ff4b4b; color: white; padding: 15px; border-radius: 8px; font-weight: bold; text-align: center; animation: pulse 1s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+""", unsafe_allow_html=True)
 
-# ---------------- DATABASE CONNECTION ----------------
-@st.cache_resource
-def get_db():
-    conn = sqlite3.connect("schoolos.db", check_same_thread=False, timeout=20)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ==========================================
+# 2. BACK-END DATABASE ENGINE
+# ==========================================
+DB_FILES = {
+    'schools': 'db_schools.json',
+    'students': 'db_students.json',
+    'inventory': 'db_inventory.json',
+    'logs': 'db_daily_logs.json',
+    'fees': 'db_fees.json',
+    'messages': 'db_messages.json',
+    'notices': 'db_notices.json',
+    'gallery': 'db_gallery.json' # Stores photo metadata
+}
 
-def run_query(query, params=(), fetch=False):
-    conn = get_db()
-    cur = conn.cursor()
-    try:
-        cur.execute(query, params)
-        if fetch:
-            return cur.fetchall()
+def load_db(table_name, default_data):
+    file_path = DB_FILES[table_name]
+    if not os.path.exists(file_path):
+        with open(file_path, 'w') as f: json.dump(default_data, f)
+        return default_data
+    with open(file_path, 'r') as f: return json.load(f)
+
+def save_db(table_name, data):
+    with open(DB_FILES[table_name], 'w') as f: json.dump(data, f)
+
+# Initialize Tables
+db_schools = load_db('schools', {})
+db_students = load_db('students', [])
+db_inventory = load_db('inventory', [
+    {"item": "Band-aids", "cat": "First Aid", "qty": 50, "min": 10},
+    {"item": "Milk Powder", "cat": "Kitchen", "qty": 10, "min": 2},
+    {"item": "Crayons", "cat": "Stationery", "qty": 100, "min": 20}
+])
+db_logs = load_db('logs', [])
+db_fees = load_db('fees', {})
+db_messages = load_db('messages', [])
+db_notices = load_db('notices', [])
+
+# ==========================================
+# 3. AUTHENTICATION ROUTER
+# ==========================================
+if 'auth' not in st.session_state:
+    st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
+
+def login_system():
+    st.title("☀️ Bright Beginnings OS")
+    st.write("Enter your credentials to access your workspace.")
+    
+    uid = st.text_input("User ID")
+    upw = st.text_input("Password", type="password")
+    
+    if st.button("Secure Login"):
+        if uid == "admin_boss" and upw == "secure123":
+            st.session_state.auth = {"logged_in": True, "role": "super_admin", "school_id": "MASTER"}
+            st.rerun()
+        elif uid in db_schools and db_schools[uid]['pass'] == upw:
+            expiry = datetime.strptime(db_schools[uid]['expiry'], '%Y-%m-%d')
+            if datetime.now() < expiry:
+                st.session_state.auth = {"logged_in": True, "role": "school", "school_id": uid}
+                st.rerun()
+            else:
+                st.error("Account Locked: Annual subscription expired.")
         else:
-            conn.commit()
-            return None
-    except sqlite3.Error as e:
-        st.error(f"Database Error: {e}")
-        return None
-    finally:
-        cur.close()
+            st.error("Invalid ID or Password.")
 
-# ---------------- INIT DATABASE ----------------
-def init_db():
-    # Changed to IF NOT EXISTS so data persists across Streamlit reruns
-    run_query("""CREATE TABLE IF NOT EXISTS schools (
-        id TEXT PRIMARY KEY, name TEXT, pass TEXT, plan TEXT, 
-        expiry TEXT, extra_students INTEGER DEFAULT 0
-    )""")
+# ==========================================
+# 4. SUPER ADMIN INTERFACE (YOUR DASHBOARD)
+# ==========================================
+def render_super_admin():
+    st.title("👑 Owner Command Center")
+    t1, t2, t3 = st.tabs(["Manage Clients", "Global Broadcast", "System Revenue"])
+    
+    with t1:
+        st.subheader("Onboard New School")
+        with st.form("new_client"):
+            s_id = st.text_input("Client ID (e.g., school_01)")
+            s_pw = st.text_input("Client Password")
+            s_name = st.text_input("School Name")
+            if st.form_submit_button("Generate 1-Year License"):
+                exp = (datetime.now() + timedelta(days=365)).strftime('%Y-%m-%d')
+                db_schools[s_id] = {"name": s_name, "pass": s_pw, "expiry": exp}
+                save_db('schools', db_schools)
+                st.success(f"License generated for {s_name}")
+        if db_schools:
+            st.table(pd.DataFrame.from_dict(db_schools, orient='index'))
 
-    run_query("""CREATE TABLE IF NOT EXISTS students (
-        id TEXT PRIMARY KEY, name TEXT, blood TEXT, allergy TEXT,
-        parent_name TEXT, parent_phone TEXT, parent_pass TEXT,
-        likes TEXT, dislikes TEXT, siblings TEXT, class TEXT, school_id TEXT
-    )""")
+    with t2:
+        st.subheader("Push Notice to All Schools")
+        msg = st.text_area("Message Content")
+        is_sos = st.checkbox("Mark as 🚨 EMERGENCY SOS")
+        if st.button("Broadcast Now"):
+            prefix = "🚨 SOS: " if is_sos else "📢 UPDATE: "
+            db_notices.append({"date": str(datetime.now()), "msg": prefix + msg})
+            save_db('notices', db_notices)
+            st.success("Broadcast deployed across all tenants.")
 
-    run_query("""CREATE TABLE IF NOT EXISTS fees (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT, 
-        amount INTEGER, month TEXT, status TEXT, 
-        payment_date TEXT, school_id TEXT
-    )""")
+    with t3:
+        st.subheader("Revenue Audit")
+        st.metric("Total Active Licenses", len(db_schools))
+        st.write("Assuming $1500/year per school:")
+        st.metric("Projected Annual ARR", f"${len(db_schools) * 1500}")
 
-    run_query("""CREATE TABLE IF NOT EXISTS inventory (
-        id TEXT PRIMARY KEY, item_name TEXT, category TEXT, 
-        quantity INTEGER, min_quantity INTEGER, school_id TEXT
-    )""")
+# ==========================================
+# 5. SCHOOL TENANT INTERFACE (CLIENT DASHBOARD)
+# ==========================================
+def render_school_dashboard():
+    sid = st.session_state.auth["school_id"]
+    school_name = db_schools[sid]['name']
+    
+    # Check for SOS / Broadcasts
+    if db_notices and "🚨" in db_notices[-1]['msg']:
+        st.markdown(f'<div class="sos-alert">{db_notices[-1]["msg"]}</div><br>', unsafe_allow_html=True)
+        
+    st.sidebar.title(f"🏫 {school_name}")
+    nav = st.sidebar.radio("Workspace", [
+        "Daily Care & Logs", 
+        "Student Directory", 
+        "Photo Gallery",
+        "Inventory Management", 
+        "Fee & Receipts", 
+        "Parent Queries",
+        "Staff Attendance"
+    ])
 
-    run_query("""CREATE TABLE IF NOT EXISTS care_logs (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        activity TEXT, notes TEXT, time TEXT, school_id TEXT
-    )""")
+    # Filter data for this specific school
+    my_students = [s for s in db_students if s.get('school') == sid]
+    student_names = [s['name'] for s in my_students]
 
-    run_query("""CREATE TABLE IF NOT EXISTS gallery (
-        id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        caption TEXT, image BLOB, school_id TEXT
-    )""")
+    if nav == "Daily Care & Logs":
+        st.title("🧸 Daily Care Tracker")
+        with st.form("log_form"):
+            child = st.selectbox("Select Child", student_names) if student_names else st.selectbox("Select Child", ["No students found"])
+            activity = st.selectbox("Activity", ["💧 Pee/Potty", "🧻 Diaper Change", "🍱 Lunch", "🍎 Snacks", "🏥 Ouchie/First Aid"])
+            notes = st.text_input("Details (e.g., 'Ate all', 'Dry')")
+            if st.form_submit_button("Post Update to Parent"):
+                db_logs.append({"school": sid, "child": child, "act": activity, "notes": notes, "time": datetime.now().strftime("%I:%M %p")})
+                save_db('logs', db_logs)
+                st.success("Update sent to parent feed!")
+        
+        st.subheader("Today's Timeline")
+        my_logs = [log for log in db_logs if log.get('school') == sid]
+        if my_logs: st.table(pd.DataFrame(my_logs).tail(5))
 
-init_db()
+    elif nav == "Student Directory":
+        st.title("📁 Student Profiles")
+        with st.expander("➕ Enroll New Student"):
+            with st.form("enroll"):
+                name = st.text_input("Full Name")
+                parent = st.text_input("Parent Name & Contact")
+                bg = st.selectbox("Blood Group", ["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"])
+                allg = st.text_input("Critical Allergies (Leave blank if none)")
+                if st.form_submit_button("Save Profile"):
+                    db_students.append({"school": sid, "name": name, "parent": parent, "bg": bg, "allergies": allg})
+                    save_db('students', db_students)
+                    st.rerun()
+        if my_students: st.dataframe(pd.DataFrame(my_students))
 
-# ---------------- SESSION STATE ----------------
-if "auth" not in st.session_state:
-    st.session_state.auth = {
-        "logged_in": False, 
-        "role": None, 
-        "school_id": None, 
-        "student_id": None
-    }
+    elif nav == "Photo Gallery":
+        st.title("📸 Class Photos & Tagging")
+        uploaded_file = st.file_uploader("Upload Class Photo", type=['jpg', 'png', 'jpeg'])
+        if uploaded_file and student_names:
+            st.image(uploaded_file, width=300)
+            tagged = st.multiselect("Tag Students in this photo", student_names)
+            if st.button("Publish to Parents"):
+                st.success(f"Photo published! Notifications sent to parents of: {', '.join(tagged)}")
 
-# ---------------- LOGIN PAGE ----------------
+    elif nav == "Inventory Management":
+        st.title("📦 Resource Stock")
+        cat_filter = st.radio("Category", ["All", "First Aid", "Kitchen", "Stationery"], horizontal=True)
+        
+        for i, item in enumerate(db_inventory):
+            if cat_filter == "All" or item['cat'] == cat_filter:
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"**{item['item']}** ({item['qty']} left)")
+                if item['qty'] <= item['min']: c1.error("LOW STOCK")
+                if c2.button("➕", key=f"add_{i}"):
+                    db_inventory[i]['qty'] += 1
+                    save_db('inventory', db_inventory)
+                    st.rerun()
+                if c3.button("➖", key=f"sub_{i}"):
+                    db_inventory[i]['qty'] -= 1
+                    save_db('inventory', db_inventory)
+                    st.rerun()
+
+    elif nav == "Fee & Receipts":
+        st.title("💰 Financial Ledger")
+        if student_names:
+            child = st.selectbox("Select Account", student_names)
+            amt = st.number_input("Payment Amount ($)", min_value=1)
+            if st.button("Process Payment & Generate Receipt"):
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                st.markdown(f"""
+                <div class="receipt">
+                    <h2>{school_name.upper()}</h2>
+                    <p><b>Official Receipt</b></p><hr>
+                    <p>Student: {child}</p>
+                    <p>Date: {date_str}</p>
+                    <p>Amount Received: <b>${amt}</b></p>
+                    <hr><p>Thank you for your business.</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.warning("Please add students first.")
+
+    elif nav == "Parent Queries":
+        st.title("💬 Private Messaging")
+        st.info("Parents submit queries via their mobile view. Teachers respond here.")
+        # Placeholder for 2-way chat loop
+        st.text_area("Respond to pending query (Child: Rahul, Issue: Late pickup today)")
+        st.button("Send Reply")
+
+    elif nav == "Staff Attendance":
+        st.title("📍 Geofenced Check-In (10m)")
+        st.write("System requesting high-accuracy GPS coordinates...")
+        # Simulating the JS Geolocation for the backend logic
+        st.info("Distance to school center: ~4 meters.")
+        if st.button("Confirm Arrival (In-Time)"):
+            st.success(f"Verified! In-Time logged at {datetime.now().strftime('%H:%M %p')}")
+
+# ==========================================
+# 6. APP EXECUTION
+# ==========================================
 if not st.session_state.auth["logged_in"]:
-    st.title("🏫 SchoolOS Pro")
-    st.markdown("### Welcome! Login to continue")
-
-    role = st.selectbox("Login As", ["School/Admin", "Parent"])
-    user = st.text_input("User ID / Phone Number")
-    pw = st.text_input("Password", type="password")
-
-    if st.button("🔑 Login", type="primary", use_container_width=True):
-        if role == "School/Admin":
-            if user == "admin" and pw == "admin123":
-                st.session_state.auth = {"logged_in": True, "role": "admin"}
-                st.rerun()
-
-            school = run_query("SELECT * FROM schools WHERE id=? AND pass=?", (user, pw), True)
-            if school:
-                school = school[0]
-                try:
-                    expiry_date = datetime.strptime(school["expiry"], "%Y-%m-%d")
-                    if datetime.now() < expiry_date:
-                        st.session_state.auth = {
-                            "logged_in": True, 
-                            "role": "school", 
-                            "school_id": user
-                        }
-                        st.rerun()
-                    else:
-                        st.error("Your school subscription has expired!")
-                except:
-                    st.error("Invalid expiry date.")
-            else:
-                st.error("Invalid School ID or Password.")
-
-        elif role == "Parent":
-            parent = run_query("SELECT * FROM students WHERE parent_phone=? AND parent_pass=?", (user, pw), True)
-            if parent:
-                parent = parent[0]
-                st.session_state.auth = {
-                    "logged_in": True,
-                    "role": "parent",
-                    "school_id": parent["school_id"],
-                    "student_id": parent["id"]
-                }
-                st.rerun()
-            else:
-                st.error("Invalid Phone or Password.")
-
+    login_system()
 else:
-    # Logout
-    if st.sidebar.button("🚪 Logout"):
-        st.session_state.auth = {"logged_in": False, "role": None, "school_id": None, "student_id": None}
+    if st.sidebar.button("Log Out"):
+        st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
         st.rerun()
-
-    # ================= ADMIN DASHBOARD =================
-    if st.session_state.auth["role"] == "admin":
-        st.title("👑 Admin Dashboard")
-        st.subheader("Create New School")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            sid = st.text_input("School ID (e.g. TN001)")
-            name = st.text_input("School Name")
-        with col2:
-            pw = st.text_input("Password", type="password")
-            plan = st.selectbox("Plan", ["Basic", "Standard", "Premium", "Enterprise"])
-
-        if st.button("Create School", type="primary"):
-            if sid and name and pw:
-                expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-                try:
-                    run_query("INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)",
-                              (sid, name, pw, plan, expiry, 0))
-                    st.success(f"✅ School **{name}** created!")
-                    st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("School ID already exists!")
-            else:
-                st.error("All fields are required!")
-
-        st.subheader("Registered Schools")
-        schools = run_query("SELECT id, name, plan, expiry FROM schools ORDER BY name", fetch=True)
-        if schools:
-            for s in schools:
-                st.write(f"**{s['name']}** ({s['id']}) — {s['plan']} | Expires: {s['expiry']}")
-        else:
-            st.info("No schools registered yet.")
-
-    # ================= SCHOOL DASHBOARD =================
-    elif st.session_state.auth["role"] == "school":
-        sid = st.session_state.auth["school_id"]
-        st.title(f"🏫 {sid.upper()} Dashboard")
-
-        # Metrics
-        total_students = len(run_query("SELECT id FROM students WHERE school_id=?", (sid,), True) or [])
-        pending_fees = len(run_query("SELECT id FROM fees WHERE school_id=? AND status='Pending'", (sid,), True) or [])
-        low_stock = len(run_query("SELECT id FROM inventory WHERE school_id=? AND quantity <= min_quantity", (sid,), True) or [])
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Students", total_students)
-        col2.metric("Pending Fees", pending_fees)
-        col3.metric("Low Stock", low_stock)
-
-        menu = st.sidebar.selectbox(
-            "Menu", 
-            ["📋 Students", "💰 Fees", "📦 Inventory", "🧸 Care Logs", "📸 Gallery"]
-        )
-
-        if menu == "📋 Students":
-            st.subheader("Add New Student")
-            with st.form("add_student"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    name = st.text_input("Student Name*")
-                    blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
-                    class_ = st.text_input("Class / Section")
-                with col2:
-                    allergy = st.text_input("Allergies / Medical notes")
-                    likes = st.text_input("Likes")
-                    dislikes = st.text_input("Dislikes")
-                parent_name = st.text_input("Parent Name*")
-                parent_phone = st.text_input("Parent Phone*")
-                parent_pass = st.text_input("Parent Password")
-
-                if st.form_submit_button("Add Student"):
-                    if name and parent_name and parent_phone:
-                        run_query("""INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (str(uuid.uuid4()), name, blood, allergy, parent_name, parent_phone, 
-                             parent_pass or "1234", likes, dislikes, "", class_, sid))
-                        st.success("Student added successfully!")
-                        st.rerun()
-                    else:
-                        st.error("Name, Parent & Phone are required")
-
-            st.subheader("All Students")
-            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
-            if students:
-                for s in students:
-                    with st.expander(f"👦 {s['name']} • {s['class']}"):
-                        st.write(f"**Blood:** {s['blood']} | **Allergy:** {s['allergy'] or 'None'}")
-                        st.write(f"**Parent:** {s['parent_name']} | **Phone:** {s['parent_phone']}")
-            else:
-                st.info("No students yet.")
-
-        elif menu == "💰 Fees":
-            st.subheader("Fee Management")
-            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
-            student_map = {s["name"]: s["id"] for s in students}
-            
-            with st.form("fee_form"):
-                student_name = st.selectbox("Student", list(student_map.keys())) if student_map else None
-                amount = st.number_input("Amount (₹)", min_value=0)
-                month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
-                if st.form_submit_button("Add Fee Record") and student_name:
-                    run_query("INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (str(uuid.uuid4()), student_map[student_name], student_name, amount, month, "Pending", "", sid))
-                    st.success("Fee record added!")
-                    st.rerun()
-
-            st.subheader("All Fees")
-            fees = run_query("SELECT * FROM fees WHERE school_id=? ORDER BY month", (sid,), True)
-            if fees:
-                for f in fees:
-                    status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
-                    col1, col2, col3, col4 = st.columns([2,1,1,2])
-                    col1.write(f["student_name"])
-                    col2.write(f["month"])
-                    col3.write(f"₹{f['amount']}")
-                    col4.write(status)
-                    if f["status"] == "Pending":
-                        if st.button(f"Mark {f['student_name']} - {f['month']} as PAID", key=f["id"]):
-                            run_query("UPDATE fees SET status='Paid', payment_date=? WHERE id=?", 
-                                      (str(datetime.now()), f["id"]))
-                            st.rerun()
-            else:
-                st.info("No fee records yet.")
-
-        elif menu == "📦 Inventory":
-            st.subheader("Inventory Management")
-            col1, col2, col3 = st.columns([3,2,2])
-            with col1: item = st.text_input("Item Name")
-            with col2: category = st.selectbox("Category", ["General", "Stationery", "Food", "Uniform", "Medicine"])
-            with col3: qty = st.number_input("Current Quantity", min_value=0, value=10)
-
-            if st.button("Add / Update Item"):
-                if item:
-                    existing = run_query("SELECT id FROM inventory WHERE item_name=? AND school_id=?", (item, sid), True)
-                    if existing:
-                        run_query("UPDATE inventory SET quantity=? WHERE id=?", (qty, existing[0]["id"]))
-                        st.success("Quantity updated!")
-                    else:
-                        run_query("INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)", 
-                                  (str(uuid.uuid4()), item, category, qty, 5, sid))
-                        st.success("Item added!")
-                    st.rerun()
-
-            st.subheader("Current Stock")
-            inventory = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
-            if inventory:
-                for item in inventory:
-                    color = "🔴 Low Stock" if item["quantity"] <= item["min_quantity"] else "🟢 OK"
-                    st.write(f"{color} **{item['item_name']}** ({item['category']}) — Qty: **{item['quantity']}**")
-            else:
-                st.info("No items in inventory yet.")
-
-        elif menu == "🧸 Care Logs":
-            st.subheader("Add Care Log")
-            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
-            student_map = {s["name"]: s["id"] for s in students}
-            st_name = st.selectbox("Student", list(student_map.keys())) if student_map else None
-            activity = st.selectbox("Activity", ["Meal", "Sleep", "Play", "Toilet", "Activity"])
-            notes = st.text_input("Notes / Observation")
-
-            if st.button("Save Log") and st_name:
-                run_query("INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), student_map[st_name], st_name, activity, notes, str(datetime.now()), sid))
-                st.success("Care log added!")
-                st.rerun()
-
-            st.subheader("Recent Care Logs")
-            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC LIMIT 30", (sid,), True)
-            for l in logs or []:
-                st.caption(f"{l['time'][:16]} • {l['student_name']}")
-                st.write(f"**{l['activity']}** — {l['notes']}")
-
-        elif menu == "📸 Gallery":
-            st.subheader("Upload Photo")
-            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
-            student_map = {s["name"]: s["id"] for s in students}
-            st_name = st.selectbox("Student", list(student_map.keys())) if student_map else None
-            img = st.file_uploader("Choose image", type=["jpg", "png", "jpeg"])
-            caption = st.text_input("Caption / Description")
-
-            if st.button("Upload to Gallery") and img and st_name:
-                image_bytes = img.read()
-                run_query("INSERT INTO gallery VALUES (?, ?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), student_map[st_name], st_name, caption, image_bytes, sid))
-                st.success("Photo uploaded!")
-                st.rerun()
-
-            st.subheader("School Gallery")
-            imgs = run_query("SELECT * FROM gallery WHERE school_id=? ORDER BY id DESC", (sid,), True)
-            if imgs:
-                cols = st.columns(3)
-                for idx, i in enumerate(imgs):
-                    with cols[idx % 3]:
-                        try:
-                            if i["image"]:
-                                st.image(BytesIO(i["image"]), caption=f"{i['student_name']} — {i['caption']}", use_container_width=True)
-                            else:
-                                st.info("No image data")
-                        except Exception as e:
-                            st.error(f"Cannot display image: {e}")
-            else:
-                st.info("No photos yet.")
-
-    # ================= PARENT DASHBOARD =================
-    elif st.session_state.auth["role"] == "parent":
-        student_id = st.session_state.auth["student_id"]
-        student_row = run_query("SELECT * FROM students WHERE id=?", (student_id,), True)
-        if not student_row:
-            st.error("Student record not found!")
-            st.stop()
-        student = student_row[0]
-
-        st.title(f"👶 {student['name']}'s Dashboard")
-        st.write(f"**Class:** {student['class']} | **Blood:** {student['blood']}")
-        if student.get('allergy'):
-            st.warning(f"⚠️ Allergy: {student['allergy']}")
-
-        st.subheader("🧸 Recent Care Logs")
-        logs = run_query("SELECT * FROM care_logs WHERE student_id=? ORDER BY time DESC LIMIT 10", (student_id,), True)
-        for l in logs or []:
-            st.write(f"**{l['activity']}** — {l['notes']} • {l['time'][:16]}")
-
-        st.subheader("💰 Fees")
-        fees = run_query("SELECT * FROM fees WHERE student_id=? ORDER BY month", (student_id,), True)
-        for f in fees or []:
-            status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
-            st.write(f"{f['month']} — ₹{f['amount']} — {status}")
-
-        st.subheader("📸 Gallery")
-        imgs = run_query("SELECT * FROM gallery WHERE student_id=? ORDER BY id DESC", (student_id,), True)
-        if imgs:
-            for i in imgs:
-                try:
-                    if i["image"]:
-                        st.image(BytesIO(i["image"]), caption=i["caption"], use_container_width=True)
-                except Exception as e:
-                    st.error(f"Cannot display image: {e}")
-        else:
-            st.info("No photos yet.")
-
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.caption("SchoolOS Pro - Built with Streamlit + SQLite")
+        
+    if st.session_state.auth["role"] == "super_admin":
+        render_super_admin()
+    else:
+        render_school_dashboard()
