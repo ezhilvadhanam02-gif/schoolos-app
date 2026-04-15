@@ -7,6 +7,6 @@ This project is under development and is not open for public use.
 The code in this repository is proprietary and may not be copied, modified, or distributed without permission.
 
 ## 👨‍💻 Author
-Your Name
+Ezhil
 
 © 2026 All rights reserved
