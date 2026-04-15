@@ -170,9 +170,9 @@ else:
 
     role = st.session_state.auth["role"]
 
-    # =========================================================
-    # 👑 SUPER ADMIN PANEL
-    # =========================================================
+    # =====================================================
+    # 👑 SUPER ADMIN
+    # =====================================================
     if role == "super_admin":
         st.title("👑 Super Admin Panel")
 
@@ -187,40 +187,26 @@ else:
             plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
 
             if st.button("Create School"):
-                exists = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)
+                expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
 
-                if exists:
-                    st.error("School ID already exists")
-                else:
-                    expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+                run_query("INSERT INTO schools VALUES (?, ?, ?, ?, ?)",
+                          (sid, name, plan, expiry, 0))
 
-                    run_query(
-                        "INSERT INTO schools VALUES (?, ?, ?, ?, ?)",
-                        (sid, name, plan, expiry, 0)
-                    )
+                run_query("INSERT INTO users VALUES (?, ?, ?, ?, ?)",
+                          (str(uuid.uuid4()), sid, sid, hash_password(pw), "school"))
 
-                    run_query(
-                        "INSERT INTO users VALUES (?, ?, ?, ?, ?)",
-                        (str(uuid.uuid4()), sid, sid, hash_password(pw), "school")
-                    )
-
-                    st.success("School Created")
+                st.success("School Created")
 
         # REVENUE
         elif menu == "Revenue":
-            st.subheader("💰 Revenue Dashboard")
-
             schools = run_query("SELECT * FROM schools", fetch=True)
 
-            total = 0
-            plan_count = {}
-
-            for s in schools:
-                price = PLAN_PRICES.get(s["plan"], 0)
-                total += price
-                plan_count[s["plan"]] = plan_count.get(s["plan"], 0) + 1
-
+            total = sum(PLAN_PRICES[s["plan"]] for s in schools)
             st.metric("Total Revenue", f"₹{total}")
+
+            plan_count = {}
+            for s in schools:
+                plan_count[s["plan"]] = plan_count.get(s["plan"], 0) + 1
 
             for p, c in plan_count.items():
                 st.write(f"{p}: {c} schools")
@@ -233,41 +219,36 @@ else:
                 expiry = datetime.strptime(s["expiry"], "%Y-%m-%d")
                 status = "Active" if datetime.now() < expiry else "Expired"
 
-                st.write(f"🏫 {s['name']} | {s['plan']} | {status}")
-                st.divider()
+                st.write(f"{s['name']} | {s['plan']} | {status}")
 
         # BROADCAST
         elif menu == "Broadcast":
             msg = st.text_area("Message")
 
             if st.button("Send"):
-                run_query(
-                    "INSERT INTO broadcasts VALUES (?, ?, ?)",
-                    (str(uuid.uuid4()), msg, str(datetime.now()))
-                )
+                run_query("INSERT INTO broadcasts VALUES (?, ?, ?)",
+                          (str(uuid.uuid4()), msg, str(datetime.now())))
                 st.success("Sent")
 
             logs = run_query("SELECT * FROM broadcasts ORDER BY time DESC", fetch=True)
-
             for l in logs:
                 st.write(f"{l['time']} - {l['message']}")
 
-    # =========================================================
-    # 🏫 SCHOOL PANEL
-    # =========================================================
+    # =====================================================
+    # 🏫 SCHOOL PANEL (FULL FEATURES)
+    # =====================================================
     elif role == "school":
         sid = st.session_state.auth["school_id"]
 
         school = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)[0]
 
-        expiry = datetime.strptime(school["expiry"], "%Y-%m-%d")
-        if datetime.now() > expiry:
+        if datetime.now() > datetime.strptime(school["expiry"], "%Y-%m-%d"):
             st.error("Subscription expired")
             st.stop()
 
         st.title(f"🏫 {school['name']}")
 
-        # BROADCAST DISPLAY
+        # Broadcasts
         broadcasts = run_query("SELECT * FROM broadcasts ORDER BY time DESC LIMIT 3", fetch=True)
         for b in broadcasts:
             st.info(f"📢 {b['message']}")
@@ -284,29 +265,28 @@ else:
 
         # DASHBOARD
         if menu == "Dashboard":
-            stats = run_query("""
-            SELECT 
-            SUM(CASE WHEN status='Paid' THEN amount ELSE 0 END) as paid,
-            SUM(CASE WHEN status='Pending' THEN amount ELSE 0 END) as pending
-            FROM fees WHERE school_id=?
-            """, (sid,), True)[0]
+            fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
 
-            st.metric("Students", len(students))
-            st.metric("Collected", f"₹{stats['paid'] or 0}")
-            st.metric("Pending", f"₹{stats['pending'] or 0}")
+            paid = sum(f["amount"] for f in fees if f["status"] == "Paid")
+            pending = sum(f["amount"] for f in fees if f["status"] == "Pending")
 
-        # STUDENTS (FULL - your structure preserved)
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Students", len(students))
+            col2.metric("Collected", f"₹{paid}")
+            col3.metric("Pending", f"₹{pending}")
+
+        # STUDENTS
         elif menu == "Students":
             with st.form("add_student"):
                 name = st.text_input("Name")
-                blood = st.text_input("Blood")
+                blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
                 allergy = st.text_input("Allergy")
-                parent_name = st.text_input("Parent")
+                parent_name = st.text_input("Parent Name")
                 parent_phone = st.text_input("Phone")
                 likes = st.text_input("Likes")
                 dislikes = st.text_input("Dislikes")
                 siblings = st.text_input("Siblings")
-                cls = st.text_input("Class")
+                student_class = st.text_input("Class")
 
                 if st.form_submit_button("Add"):
                     if len(students) >= max_students:
@@ -318,17 +298,17 @@ else:
                             "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (str(uuid.uuid4()), name, blood, allergy,
                              parent_name, parent_phone,
-                             likes, dislikes, siblings, cls, sid)
+                             likes, dislikes, siblings,
+                             student_class, sid)
                         )
-                        st.success("Added")
                         st.rerun()
 
             for s in students:
                 st.write(f"{s['name']} | {s['parent_name']}")
 
-        # FEES (UNCHANGED CORE LOGIC)
+        # FEES
         elif menu == "Fees":
-            student_map = {s["name"]: s["id"] for s in students}
+            student_map = {f"{s['name']} ({s['id'][:4]})": s["id"] for s in students}
 
             with st.form("fee"):
                 sn = st.selectbox("Student", list(student_map.keys()))
@@ -340,24 +320,30 @@ else:
                         "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (str(uuid.uuid4()), student_map[sn], sn, amt, month, "Pending", "", sid)
                     )
-                    st.success("Added")
                     st.rerun()
 
             fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
 
             for f in fees:
+                col1, col2, col3, col4 = st.columns(4)
+                col1.write(f["student_name"])
+                col2.write(f["month"])
+                col3.write(f"₹{f['amount']}")
+
                 if f["status"] == "Pending":
-                    if st.button(f"Pay {f['student_name']} {f['month']}", key=f["id"]):
+                    if col4.button("Mark Paid", key=f["id"]):
                         run_query(
                             "UPDATE fees SET status=?, payment_date=? WHERE id=?",
                             ("Paid", str(datetime.now()), f["id"])
                         )
+
                         file = generate_receipt(f["student_name"], f["amount"])
                         with open(file, "rb") as fobj:
                             st.download_button("Download Receipt", fobj, file_name=file)
+
                         st.rerun()
                 else:
-                    st.success(f"{f['student_name']} Paid")
+                    col4.success("Paid")
 
         # INVENTORY
         elif menu == "Inventory":
@@ -376,7 +362,7 @@ else:
 
             items = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
             for i in items:
-                st.write(i["item_name"])
+                st.write(f"{i['item_name']} | Qty: {i['quantity']}")
                 if i["quantity"] <= i["min_quantity"]:
                     st.error("Low stock")
 
@@ -386,7 +372,7 @@ else:
 
             with st.form("log"):
                 sn = st.selectbox("Student", list(student_map.keys()))
-                act = st.text_input("Activity")
+                act = st.selectbox("Activity", ["Meal","Sleep","Potty","Play","Medicine"])
                 notes = st.text_input("Notes")
 
                 if st.form_submit_button("Add"):
@@ -396,18 +382,16 @@ else:
                     )
                     st.rerun()
 
-            logs = run_query("SELECT * FROM care_logs WHERE school_id=?", (sid,), True)
+            logs = run_query("SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC", (sid,), True)
             for l in logs:
-                st.write(f"{l['student_name']} - {l['activity']}")
+                st.write(f"{l['student_name']} | {l['activity']} | {l['notes']}")
 
         # UPGRADE
         elif menu == "Upgrade":
             for p, price in PLAN_PRICES.items():
                 if st.button(f"{p} ₹{price}"):
                     new_expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-                    run_query(
-                        "UPDATE schools SET plan=?, expiry=? WHERE id=?",
-                        (p, new_expiry, sid)
-                    )
+                    run_query("UPDATE schools SET plan=?, expiry=? WHERE id=?",
+                              (p, new_expiry, sid))
                     st.success("Upgraded")
                     st.rerun()
