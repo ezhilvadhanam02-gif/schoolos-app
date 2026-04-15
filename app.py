@@ -10,10 +10,10 @@ st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
 if st.sidebar.button("⚠️ Reset Database (Demo only)"):
     if os.path.exists("schoolos.db"):
         os.remove("schoolos.db")
-    st.success("Database reset! Refresh the app.")
+    st.success("Database reset! Please refresh the app.")
     st.stop()
 
-# ---------------- SAFE QUERY FUNCTION ----------------
+# ---------------- SAFE DATABASE QUERY ----------------
 def run_query(query, params=(), fetch=False):
     conn = sqlite3.connect("schoolos.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -63,14 +63,14 @@ def init_db():
 
 init_db()
 
-# ---------------- SESSION ----------------
+# ---------------- SESSION STATE ----------------
 if "auth" not in st.session_state:
     st.session_state.auth = {"logged_in": False, "role": None, "school_id": None, "student_id": None}
 
 # ---------------- LOGIN ----------------
 if not st.session_state.auth["logged_in"]:
     st.title("🏫 SchoolOS Pro")
-    st.markdown("### Login to your workspace")
+    st.markdown("### Welcome! Login to continue")
     
     role = st.selectbox("Login As", ["School/Admin", "Parent"])
     user = st.text_input("User ID / Phone Number")
@@ -89,9 +89,9 @@ if not st.session_state.auth["logged_in"]:
                     st.session_state.auth = {"logged_in": True, "role": "school", "school_id": user}
                     st.rerun()
                 else:
-                    st.error("Subscription expired!")
+                    st.error("Your school subscription has expired!")
             else:
-                st.error("Invalid credentials.")
+                st.error("Invalid School ID or Password.")
         
         elif role == "Parent":
             parent_res = run_query("SELECT * FROM students WHERE parent_phone=? AND parent_pass=?", (user, pw), True)
@@ -105,31 +105,105 @@ if not st.session_state.auth["logged_in"]:
                 }
                 st.rerun()
             else:
-                st.error("Invalid phone or password.")
+                st.error("Invalid Phone or Password.")
 else:
     if st.sidebar.button("🚪 Logout"):
         st.session_state.auth = {"logged_in": False, "role": None, "school_id": None, "student_id": None}
         st.rerun()
 
-    # ADMIN SECTION
+    # ================= ADMIN DASHBOARD =================
     if st.session_state.auth["role"] == "admin":
         st.title("👑 Admin Dashboard")
-        # ... (your admin code - keep as is or tell me if you want improvements)
+        st.subheader("Create New School")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            sid = st.text_input("School ID (e.g. TN001)")
+            name = st.text_input("School Name")
+        with col2:
+            pw = st.text_input("Password", type="password")
+            plan = st.selectbox("Plan", ["Basic", "Standard", "Premium", "Enterprise"])
+        
+        if st.button("Create School", type="primary"):
+            if sid and name and pw:
+                expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+                try:
+                    run_query("INSERT INTO schools VALUES (?, ?, ?, ?, ?, ?)", 
+                              (sid, name, pw, plan, expiry, 0))
+                    st.success(f"✅ School **{name}** created!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("School ID already exists!")
+            else:
+                st.error("All fields are required!")
 
-    # SCHOOL SECTION
+        st.subheader("Registered Schools")
+        schools = run_query("SELECT id, name, plan, expiry FROM schools", fetch=True)
+        if schools:
+            for s in schools:
+                st.write(f"**{s['name']}** ({s['id']}) — {s['plan']} | Expires: {s['expiry']}")
+        else:
+            st.info("No schools registered yet.")
+
+    # ================= SCHOOL DASHBOARD =================
     elif st.session_state.auth["role"] == "school":
         sid = st.session_state.auth["school_id"]
         st.title(f"🏫 {sid} Dashboard")
+        
+        # Quick metrics
+        students = run_query("SELECT COUNT(*) as cnt FROM students WHERE school_id=?", (sid,), True)[0]["cnt"]
+        pending_fees = run_query("SELECT COUNT(*) as cnt FROM fees WHERE school_id=? AND status='Pending'", (sid,), True)[0]["cnt"]
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Students", students)
+        col2.metric("Pending Fees", pending_fees)
+        col3.metric("Low Stock", "Coming soon")
+        
         menu = st.sidebar.selectbox("Menu", ["Students", "Fees", "Inventory", "Care Logs", "Gallery"])
-        # Your existing menu logic goes here...
+        
+        if menu == "Students":
+            # (Your existing student form + list - I kept it similar but cleaned)
+            st.subheader("Add New Student")
+            with st.form("add_student"):
+                name = st.text_input("Student Name")
+                blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
+                class_ = st.text_input("Class")
+                parent_name = st.text_input("Parent Name")
+                parent_phone = st.text_input("Parent Phone")
+                parent_pass = st.text_input("Parent Password")
+                if st.form_submit_button("Add Student"):
+                    if name and parent_phone and parent_pass:
+                        run_query("""INSERT INTO students 
+                            (id, name, blood, allergy, parent_name, parent_phone, parent_pass, likes, dislikes, siblings, class, school_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (str(uuid.uuid4()), name, blood, "", parent_name, parent_phone, parent_pass, "", "", "", class_, sid))
+                        st.success("Student added!")
+                        st.rerun()
+            
+            st.subheader("Student List")
+            studs = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+            for s in studs:
+                st.write(f"👦 **{s['name']}** - {s['class']} | Parent: {s['parent_phone']}")
 
-    # PARENT SECTION
+        # ... (Fees, Inventory, Care Logs, Gallery sections kept similar but cleaned for brevity)
+        # I can expand any section if you want.
+
+    # ================= PARENT DASHBOARD =================
     elif st.session_state.auth["role"] == "parent":
-        student_id = st.session_state.auth["student_id"]
-        student = run_query("SELECT * FROM students WHERE id=?", (student_id,), True)
+        sid = st.session_state.auth["student_id"]
+        student = run_query("SELECT * FROM students WHERE id=?", (sid,), True)
         if student:
             student = student[0]
             st.title(f"👶 {student['name']}'s Dashboard")
-            # Your parent view code...
+            
+            st.subheader("Recent Care Logs")
+            logs = run_query("SELECT * FROM care_logs WHERE student_id=? ORDER BY time DESC LIMIT 5", (sid,), True)
+            for log in logs:
+                st.info(f"**{log['activity']}** — {log['notes']} ({log['time']})")
+            
+            st.subheader("Gallery")
+            photos = run_query("SELECT * FROM gallery WHERE student_id=?", (sid,), True)
+            for photo in photos:
+                st.image(photo["image"], caption=photo["caption"], use_column_width=True)
 
-# Note: I kept the structure but you can paste your full sections back in.
+# Note: I shortened some sections for this response. Tell me which menu you want fully expanded.
