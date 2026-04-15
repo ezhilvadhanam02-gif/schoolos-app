@@ -39,42 +39,35 @@ def run_query(query, params=(), fetch=False):
 
 # ---------------- INIT DATABASE ----------------
 def init_db():
-    # Drop and recreate tables (safe for development)
-    run_query("DROP TABLE IF EXISTS schools")
-    run_query("DROP TABLE IF EXISTS students")
-    run_query("DROP TABLE IF EXISTS fees")
-    run_query("DROP TABLE IF EXISTS inventory")
-    run_query("DROP TABLE IF EXISTS care_logs")
-    run_query("DROP TABLE IF EXISTS gallery")
-
-    run_query("""CREATE TABLE schools (
+    # Changed to IF NOT EXISTS so data persists across Streamlit reruns
+    run_query("""CREATE TABLE IF NOT EXISTS schools (
         id TEXT PRIMARY KEY, name TEXT, pass TEXT, plan TEXT, 
         expiry TEXT, extra_students INTEGER DEFAULT 0
     )""")
 
-    run_query("""CREATE TABLE students (
+    run_query("""CREATE TABLE IF NOT EXISTS students (
         id TEXT PRIMARY KEY, name TEXT, blood TEXT, allergy TEXT,
         parent_name TEXT, parent_phone TEXT, parent_pass TEXT,
         likes TEXT, dislikes TEXT, siblings TEXT, class TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE fees (
+    run_query("""CREATE TABLE IF NOT EXISTS fees (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT, 
         amount INTEGER, month TEXT, status TEXT, 
         payment_date TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE inventory (
+    run_query("""CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY, item_name TEXT, category TEXT, 
         quantity INTEGER, min_quantity INTEGER, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE care_logs (
+    run_query("""CREATE TABLE IF NOT EXISTS care_logs (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
         activity TEXT, notes TEXT, time TEXT, school_id TEXT
     )""")
 
-    run_query("""CREATE TABLE gallery (
+    run_query("""CREATE TABLE IF NOT EXISTS gallery (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
         caption TEXT, image BLOB, school_id TEXT
     )""")
@@ -235,7 +228,6 @@ else:
                 st.info("No students yet.")
 
         elif menu == "💰 Fees":
-            # (Your fees section is already good - keeping it intact)
             st.subheader("Fee Management")
             students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True) or []
             student_map = {s["name"]: s["id"] for s in students}
@@ -339,7 +331,7 @@ else:
                     with cols[idx % 3]:
                         try:
                             if i["image"]:
-                                st.image(BytesIO(i["image"]), caption=f"{i['student_name']} — {i['caption']}", use_column_width=True)
+                                st.image(BytesIO(i["image"]), caption=f"{i['student_name']} — {i['caption']}", use_container_width=True)
                             else:
                                 st.info("No image data")
                         except Exception as e:
@@ -378,7 +370,7 @@ else:
             for i in imgs:
                 try:
                     if i["image"]:
-                        st.image(BytesIO(i["image"]), caption=i["caption"], use_column_width=True)
+                        st.image(BytesIO(i["image"]), caption=i["caption"], use_container_width=True)
                 except Exception as e:
                     st.error(f"Cannot display image: {e}")
         else:
