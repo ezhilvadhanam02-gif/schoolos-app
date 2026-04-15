@@ -23,9 +23,9 @@ def run_query(query, params=(), fetch=False):
     cur.execute(query, params)
 
     if fetch:
-        result = cur.fetchall()
+        data = cur.fetchall()
         conn.close()
-        return result
+        return data
 
     conn.commit()
     conn.close()
@@ -104,6 +104,14 @@ def init_db():
     )
     """)
 
+    run_query("""
+    CREATE TABLE IF NOT EXISTS broadcasts (
+        id TEXT PRIMARY KEY,
+        message TEXT,
+        time TEXT
+    )
+    """)
+
 init_db()
 
 # ---------------- RECEIPT ----------------
@@ -137,7 +145,7 @@ if not st.session_state.auth.get("logged_in"):
 
     if st.button("Login"):
 
-        # Super Admin Login
+        # SUPER ADMIN
         if user == "admin" and pw == "admin123":
             st.session_state.auth = {"logged_in": True, "role": "super_admin"}
             st.rerun()
@@ -162,46 +170,95 @@ else:
 
     role = st.session_state.auth["role"]
 
-    # ================= SUPER ADMIN =================
+    # =========================================================
+    # 👑 SUPER ADMIN PANEL
+    # =========================================================
     if role == "super_admin":
         st.title("👑 Super Admin Panel")
 
-        sid = st.text_input("School ID")
-        name = st.text_input("School Name")
-        pw = st.text_input("Password")
-        plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
+        menu = st.sidebar.selectbox("Admin Menu",
+                                   ["Create School", "Revenue", "Schools", "Broadcast"])
 
-        if st.button("Create School"):
-            exists = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)
+        # CREATE SCHOOL
+        if menu == "Create School":
+            sid = st.text_input("School ID")
+            name = st.text_input("School Name")
+            pw = st.text_input("Password")
+            plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
 
-            if exists:
-                st.error("School ID already exists")
-            else:
-                expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+            if st.button("Create School"):
+                exists = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)
 
+                if exists:
+                    st.error("School ID already exists")
+                else:
+                    expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+
+                    run_query(
+                        "INSERT INTO schools VALUES (?, ?, ?, ?, ?)",
+                        (sid, name, plan, expiry, 0)
+                    )
+
+                    run_query(
+                        "INSERT INTO users VALUES (?, ?, ?, ?, ?)",
+                        (str(uuid.uuid4()), sid, sid, hash_password(pw), "school")
+                    )
+
+                    st.success("School Created")
+
+        # REVENUE
+        elif menu == "Revenue":
+            st.subheader("💰 Revenue Dashboard")
+
+            schools = run_query("SELECT * FROM schools", fetch=True)
+
+            total = 0
+            plan_count = {}
+
+            for s in schools:
+                price = PLAN_PRICES.get(s["plan"], 0)
+                total += price
+                plan_count[s["plan"]] = plan_count.get(s["plan"], 0) + 1
+
+            st.metric("Total Revenue", f"₹{total}")
+
+            for p, c in plan_count.items():
+                st.write(f"{p}: {c} schools")
+
+        # SCHOOLS
+        elif menu == "Schools":
+            schools = run_query("SELECT * FROM schools", fetch=True)
+
+            for s in schools:
+                expiry = datetime.strptime(s["expiry"], "%Y-%m-%d")
+                status = "Active" if datetime.now() < expiry else "Expired"
+
+                st.write(f"🏫 {s['name']} | {s['plan']} | {status}")
+                st.divider()
+
+        # BROADCAST
+        elif menu == "Broadcast":
+            msg = st.text_area("Message")
+
+            if st.button("Send"):
                 run_query(
-                    "INSERT INTO schools VALUES (?, ?, ?, ?, ?)",
-                    (sid, name, plan, expiry, 0)
+                    "INSERT INTO broadcasts VALUES (?, ?, ?)",
+                    (str(uuid.uuid4()), msg, str(datetime.now()))
                 )
+                st.success("Sent")
 
-                run_query(
-                    "INSERT INTO users VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), sid, sid, hash_password(pw), "school")
-                )
+            logs = run_query("SELECT * FROM broadcasts ORDER BY time DESC", fetch=True)
 
-                st.success("School Created")
+            for l in logs:
+                st.write(f"{l['time']} - {l['message']}")
 
-    # ================= SCHOOL =================
+    # =========================================================
+    # 🏫 SCHOOL PANEL
+    # =========================================================
     elif role == "school":
         sid = st.session_state.auth["school_id"]
 
-        school_data = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)
-
-        if not school_data:
-            st.error("School not found")
-            st.stop()
-
-        school = school_data[0]
+        school = run_query("SELECT * FROM schools WHERE id=?", (sid,), True)[0]
 
         expiry = datetime.strptime(school["expiry"], "%Y-%m-%d")
         if datetime.now() > expiry:
@@ -210,11 +267,15 @@ else:
 
         st.title(f"🏫 {school['name']}")
 
-        students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+        # BROADCAST DISPLAY
+        broadcasts = run_query("SELECT * FROM broadcasts ORDER BY time DESC LIMIT 3", fetch=True)
+        for b in broadcasts:
+            st.info(f"📢 {b['message']}")
 
+        students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
         max_students = PLAN_LIMITS[school["plan"]] + school["extra_students"]
 
-        st.sidebar.info(f"Plan: {school['plan']}\nStudents: {len(students)}/{max_students}")
+        st.sidebar.info(f"{school['plan']} | {len(students)}/{max_students}")
 
         menu = st.sidebar.selectbox(
             "Menu",
@@ -230,161 +291,119 @@ else:
             FROM fees WHERE school_id=?
             """, (sid,), True)[0]
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Students", len(students))
-            col2.metric("Collected", f"₹{stats['paid'] or 0}")
-            col3.metric("Pending", f"₹{stats['pending'] or 0}")
+            st.metric("Students", len(students))
+            st.metric("Collected", f"₹{stats['paid'] or 0}")
+            st.metric("Pending", f"₹{stats['pending'] or 0}")
 
-        # STUDENTS
+        # STUDENTS (FULL - your structure preserved)
         elif menu == "Students":
-            st.subheader("Student Profiles")
-
             with st.form("add_student"):
                 name = st.text_input("Name")
-                blood = st.selectbox("Blood Group", ["O+","O-","A+","A-","B+","B-","AB+","AB-"])
-                parent_name = st.text_input("Parent Name")
-                parent_phone = st.text_input("Parent Phone")
+                blood = st.text_input("Blood")
+                allergy = st.text_input("Allergy")
+                parent_name = st.text_input("Parent")
+                parent_phone = st.text_input("Phone")
+                likes = st.text_input("Likes")
+                dislikes = st.text_input("Dislikes")
+                siblings = st.text_input("Siblings")
+                cls = st.text_input("Class")
 
-                if st.form_submit_button("Add Student"):
-                    if not name or not parent_name or not parent_phone:
-                        st.error("Required fields missing")
+                if st.form_submit_button("Add"):
+                    if len(students) >= max_students:
+                        st.error("Limit reached")
                     elif not parent_phone.isdigit() or len(parent_phone) != 10:
-                        st.error("Invalid phone number")
-                    elif len(students) >= max_students:
-                        st.error("Student limit reached")
+                        st.error("Invalid phone")
                     else:
                         run_query(
                             "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                str(uuid.uuid4()), name, blood, "",
-                                parent_name, parent_phone,
-                                "", "", "",
-                                "", sid
-                            )
+                            (str(uuid.uuid4()), name, blood, allergy,
+                             parent_name, parent_phone,
+                             likes, dislikes, siblings, cls, sid)
                         )
-                        st.success("Added!")
+                        st.success("Added")
                         st.rerun()
 
             for s in students:
-                st.write(f"👶 {s['name']} | Parent: {s['parent_name']}")
+                st.write(f"{s['name']} | {s['parent_name']}")
 
-        # FEES
+        # FEES (UNCHANGED CORE LOGIC)
         elif menu == "Fees":
-            st.subheader("Fee Management")
+            student_map = {s["name"]: s["id"] for s in students}
 
-            student_map = {f"{s['name']}": s["id"] for s in students}
-
-            with st.form("fee_form"):
-                student_name = st.selectbox("Student", list(student_map.keys()))
-                amount = st.number_input("Amount", min_value=0)
+            with st.form("fee"):
+                sn = st.selectbox("Student", list(student_map.keys()))
+                amt = st.number_input("Amount", 0)
                 month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
 
-                if st.form_submit_button("Add Fee"):
+                if st.form_submit_button("Add"):
                     run_query(
                         "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            str(uuid.uuid4()),
-                            student_map[student_name],
-                            student_name,
-                            amount,
-                            month,
-                            "Pending",
-                            "",
-                            sid
-                        )
+                        (str(uuid.uuid4()), student_map[sn], sn, amt, month, "Pending", "", sid)
                     )
-                    st.success("Fee added!")
+                    st.success("Added")
                     st.rerun()
 
             fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), True)
 
             for f in fees:
-                col1, col2, col3, col4 = st.columns(4)
-                col1.write(f["student_name"])
-                col2.write(f["month"])
-                col3.write(f"₹{f['amount']}")
-
                 if f["status"] == "Pending":
-                    if col4.button("Mark Paid", key=f["id"]):
+                    if st.button(f"Pay {f['student_name']} {f['month']}", key=f["id"]):
                         run_query(
                             "UPDATE fees SET status=?, payment_date=? WHERE id=?",
                             ("Paid", str(datetime.now()), f["id"])
                         )
-
                         file = generate_receipt(f["student_name"], f["amount"])
                         with open(file, "rb") as fobj:
                             st.download_button("Download Receipt", fobj, file_name=file)
-
-                        st.success("Payment done!")
                         st.rerun()
                 else:
-                    col4.success("Paid")
+                    st.success(f"{f['student_name']} Paid")
 
         # INVENTORY
         elif menu == "Inventory":
-            st.subheader("📦 Inventory")
-
-            with st.form("add_item"):
-                item = st.text_input("Item Name")
-                category = st.selectbox("Category", ["First Aid", "Kitchen", "Stationery"])
-                qty = st.number_input("Quantity", 0)
-                min_qty = st.number_input("Min Level", 0)
+            with st.form("inv"):
+                item = st.text_input("Item")
+                cat = st.text_input("Category")
+                qty = st.number_input("Qty", 0)
+                minq = st.number_input("Min", 0)
 
                 if st.form_submit_button("Add"):
                     run_query(
                         "INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)",
-                        (str(uuid.uuid4()), item, category, qty, min_qty, sid)
+                        (str(uuid.uuid4()), item, cat, qty, minq, sid)
                     )
-                    st.success("Added!")
                     st.rerun()
 
             items = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), True)
-
             for i in items:
-                st.write(f"{i['item_name']} | {i['category']} | Qty: {i['quantity']}")
+                st.write(i["item_name"])
                 if i["quantity"] <= i["min_quantity"]:
-                    st.error("Low Stock!")
+                    st.error("Low stock")
 
         # CARE LOGS
         elif menu == "Care Logs":
-            st.subheader("👶 Care Logs")
-
             student_map = {s["name"]: s["id"] for s in students}
 
             with st.form("log"):
-                st_name = st.selectbox("Student", list(student_map.keys()))
-                activity = st.selectbox("Activity", ["Meal","Sleep","Potty","Play","Medicine"])
+                sn = st.selectbox("Student", list(student_map.keys()))
+                act = st.text_input("Activity")
                 notes = st.text_input("Notes")
 
-                if st.form_submit_button("Add Log"):
+                if st.form_submit_button("Add"):
                     run_query(
                         "INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            str(uuid.uuid4()),
-                            student_map[st_name],
-                            st_name,
-                            activity,
-                            notes,
-                            str(datetime.now()),
-                            sid
-                        )
+                        (str(uuid.uuid4()), student_map[sn], sn, act, notes, str(datetime.now()), sid)
                     )
-                    st.success("Logged!")
                     st.rerun()
 
-            logs = run_query(
-                "SELECT * FROM care_logs WHERE school_id=? ORDER BY time DESC",
-                (sid,),
-                True
-            )
-
+            logs = run_query("SELECT * FROM care_logs WHERE school_id=?", (sid,), True)
             for l in logs:
-                st.write(f"{l['student_name']} | {l['activity']} | {l['notes']}")
+                st.write(f"{l['student_name']} - {l['activity']}")
 
         # UPGRADE
         elif menu == "Upgrade":
             for p, price in PLAN_PRICES.items():
-                if st.button(f"Upgrade to {p} - ₹{price}"):
+                if st.button(f"{p} ₹{price}"):
                     new_expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
                     run_query(
                         "UPDATE schools SET plan=?, expiry=? WHERE id=?",
