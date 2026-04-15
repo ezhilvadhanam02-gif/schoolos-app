@@ -10,8 +10,6 @@ st.set_page_config(page_title="SchoolOS Pro", layout="wide")
 if st.sidebar.button("⚠️ Reset Database"):
     if os.path.exists("schoolos.db"):
         os.remove("schoolos.db")
-    st.success("Database reset! Refresh app.")
-    st.stop()
 
 # ---------------- DATABASE ----------------
 @st.cache_resource
@@ -30,8 +28,7 @@ def run_query(query, params=(), fetch=False):
         conn.commit()
     except sqlite3.IntegrityError:
         return None
-
-# ---------------- INIT DB ----------------
+# ---------------- INIT DB (Fixed - data now persists) ----------------
 def init_db():
     run_query("""CREATE TABLE IF NOT EXISTS schools (
         id TEXT PRIMARY KEY,
@@ -41,18 +38,17 @@ def init_db():
         expiry TEXT,
         extra_students INTEGER DEFAULT 0
     )""")
-
+    
     run_query("""CREATE TABLE IF NOT EXISTS students (
         id TEXT PRIMARY KEY,
         name TEXT,
         blood TEXT,
-        allergy TEXT,
-        parent_name TEXT,
-        parent_phone TEXT,
-        parent_pass TEXT,
+        dob TEXT,
+        gender TEXT,
+        class TEXT,
         school_id TEXT
     )""")
-
+    
     run_query("""CREATE TABLE IF NOT EXISTS fees (
         id TEXT PRIMARY KEY,
         student_id TEXT,
@@ -63,7 +59,16 @@ def init_db():
         payment_date TEXT,
         school_id TEXT
     )""")
-
+    
+    run_query("""CREATE TABLE IF NOT EXISTS inventory (
+        id TEXT PRIMARY KEY,
+        item_name TEXT,
+        category TEXT,
+        quantity INTEGER,
+        min_quantity INTEGER,
+        school_id TEXT
+    )""")
+    
     run_query("""CREATE TABLE IF NOT EXISTS care_logs (
         id TEXT PRIMARY KEY,
         student_id TEXT,
@@ -73,7 +78,7 @@ def init_db():
         time TEXT,
         school_id TEXT
     )""")
-
+    
     run_query("""CREATE TABLE IF NOT EXISTS gallery (
         id TEXT PRIMARY KEY,
         student_id TEXT,
@@ -82,9 +87,6 @@ def init_db():
         image BLOB,
         school_id TEXT
     )""")
-
-init_db()
-
 # ---------------- SESSION ----------------
 if "auth" not in st.session_state:
     st.session_state.auth = {
@@ -220,6 +222,11 @@ else:
             student_map = {s["name"]: s["id"] for s in students}
 
             with st.form("fee_form"):
+                students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+               if not students:
+                st.warning("⚠️ No students registered yet. Please add students first in the 'Students' menu.")
+                st.stop()
+                student_map = {s["name"]: s["id"] for s in students}
                 st_name = st.selectbox("Student", list(student_map.keys()))
                 amount = st.number_input("Amount", min_value=0)
                 month = st.selectbox("Month", ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
@@ -243,6 +250,11 @@ else:
         # -------- CARE LOGS --------
         elif menu == "Care Logs":
             student_map = {s["name"]: s["id"] for s in students}
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+           if not students:
+            st.warning("⚠️ No students registered yet. Please add students first in the 'Students' menu.")
+            st.stop()
+            student_map = {s["name"]: s["id"] for s in students}
 
             st_name = st.selectbox("Student", list(student_map.keys()))
             activity = st.selectbox("Activity", ["Meal","Sleep","Play","Toilet"])
@@ -256,6 +268,11 @@ else:
 
         # -------- GALLERY --------
         elif menu == "Gallery":
+            student_map = {s["name"]: s["id"] for s in students}
+            students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), True)
+           if not students:
+            st.warning("⚠️ No students registered yet. Please add students first in the 'Students' menu.")
+            st.stop()
             student_map = {s["name"]: s["id"] for s in students}
 
             st_name = st.selectbox("Student", list(student_map.keys()))
@@ -293,6 +310,49 @@ else:
 
         # Gallery
         st.subheader("Gallery")
-        imgs = run_query("SELECT * FROM gallery WHERE student_id=?", (student_id,), True) or []
+        st.image(i["image"], caption=f"{i['student_name']} — {i['caption']}", use_container_width=True)
         for i in imgs:
             st.image(i["image"])
+            # ================= PARENT DASHBOARD =================
+elif st.session_state.auth.get("role") == "parent":
+    student_id = st.session_state.auth["student_id"]
+    student_data = run_query("SELECT * FROM students WHERE id=?", (student_id,), True)
+    if not student_data:
+        st.error("Student not found.")
+        st.stop()
+    student = student_data[0]
+
+    st.title(f"👋 Welcome, Parent of {student['name']}!")
+    st.subheader("Student Profile")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Class", student["class"])
+    col2.metric("DOB", student["dob"])
+    col3.metric("Blood Group", student["blood"])
+
+    # Child's Fees
+    st.subheader("💰 Fee History")
+    fees = run_query("SELECT * FROM fees WHERE student_id=? ORDER BY month DESC", (student_id,), True)
+    if fees:
+        for f in fees:
+            status = "✅ Paid" if f["status"] == "Paid" else "⏳ Pending"
+            st.write(f"**{f['month']}** — ₹{f['amount']} — {status}")
+    else:
+        st.info("No fee records yet.")
+
+    # Child's Care Logs
+    st.subheader("🧸 Recent Care Logs")
+    logs = run_query("SELECT * FROM care_logs WHERE student_id=? ORDER BY time DESC LIMIT 10", (student_id,), True)
+    for l in logs:
+        st.caption(f"{l['time'][:16]} • {l['activity']}")
+        st.write(l["notes"])
+
+    # Child's Gallery
+    st.subheader("📸 Your Child's Photos")
+    imgs = run_query("SELECT * FROM gallery WHERE student_id=? ORDER BY id DESC", (student_id,), True)
+    if imgs:
+        cols = st.columns(3)
+        for idx, i in enumerate(imgs):
+            with cols[idx % 3]:
+                st.image(i["image"], caption=i["caption"], use_container_width=True)
+    else:
+        st.info("No photos yet.")
