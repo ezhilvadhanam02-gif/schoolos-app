@@ -226,7 +226,7 @@ else:
                 reset_database()
 
        # ================= SCHOOL =================
-   else:
+else:
     sid = st.session_state.auth["school_id"]
 
     school = run_query("SELECT * FROM schools WHERE id=?", (sid,), fetch=True)[0]
