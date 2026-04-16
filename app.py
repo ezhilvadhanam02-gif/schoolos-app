@@ -224,9 +224,9 @@ else:
         with tab4:
             if st.button("Reset Database"):
                 reset_database()
-# ================= SCHOOL =================
-    else:
-        sid = st.session_state.auth["school_id"]
+# ================= SCHOOL ===============          
+else:
+      sid = st.session_state.auth["school_id"]
 
         school = run_query(
             "SELECT * FROM schools WHERE id=?",
