@@ -1,3 +1,1 @@
-if st.button("Delete Chat History"):
-    st.session_state.messages = []
-    save_chat_history([])  # Ensure to save the empty state
+
