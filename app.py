@@ -1,4 +1,4 @@
-# SCHOOL PRO CLOUD v2.0 - FIXED VERSION
+# SCHOOL PRO CLOUD v2.0 - WITH PLAN LIMITS FIXED
 import streamlit as st
 import sqlite3
 import re
@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 import bcrypt
 
 st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
+
+# PLAN LIMITS - RESTORED
+PLAN_LIMITS = {"Basic": 30, "Standard": 80, "Premium": 500, "Enterprise": 999999}
 
 # Database
 @st.cache_resource
@@ -78,6 +81,19 @@ def check_pw(pw, hashed):
 def gen_id():
     return secrets.token_urlsafe(16)
 
+# STUDENT LIMIT VALIDATION - RESTORED
+def check_student_limit(school_id):
+    """Check if school can add more students. Returns (can_add, current, limit)"""
+    db = get_db_conn()
+    school = db.execute("SELECT plan, extra_students FROM schools WHERE id=?", (school_id,)).fetchone()
+    if not school:
+        return False, 0, 0
+    
+    limit = PLAN_LIMITS.get(school["plan"], 30) + school["extra_students"]
+    current = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (school_id,)).fetchone()[0]
+    
+    return current < limit, current, limit
+
 # Session
 if "auth" not in st.session_state:
     st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
@@ -130,9 +146,16 @@ def admin_page():
         if st.button("🚪 Logout"):
             st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
             st.rerun()
-        st.metric("Schools", db.execute("SELECT COUNT(*) FROM schools WHERE is_active=1").fetchone()[0])
+        
+        total_schools = db.execute("SELECT COUNT(*) FROM schools WHERE is_active=1").fetchone()[0]
+        total_students = db.execute("SELECT COUNT(*) FROM students WHERE is_active=1").fetchone()[0]
+        total_revenue = db.execute("SELECT COALESCE(SUM(amount), 0) FROM fees WHERE status='Paid'").fetchone()[0]
+        
+        st.metric("Schools", total_schools)
+        st.metric("Students", total_students)
+        st.metric("Revenue", f"₹{total_revenue:,}")
     
-    t1, t2, t3 = st.tabs(["🏫 Schools", "📢 Broadcasts", "⚙️ Settings"])
+    t1, t2, t3, t4 = st.tabs(["🏫 Schools", "📢 Broadcasts", "💰 Revenue", "⚙️ Settings"])
     
     with t1:
         c1, c2 = st.columns([1, 2])
@@ -142,8 +165,9 @@ def admin_page():
                 sid = st.text_input("School ID")
                 name = st.text_input("Name")
                 pw = st.text_input("Password", type="password")
-                plan = st.selectbox("Plan", ["Basic", "Standard", "Premium", "Enterprise"])
+                plan = st.selectbox("Plan", list(PLAN_LIMITS.keys()))
                 years = st.number_input("Years", 1, 5, 1)
+                extra = st.number_input("Extra Student Slots", 0, 1000, 0)
                 
                 if st.form_submit_button("➕ Create"):
                     if not all([sid, name, pw]):
@@ -152,19 +176,20 @@ def admin_page():
                         st.error("ID exists")
                     else:
                         exp = (datetime.now() + timedelta(days=365*years)).strftime("%Y-%m-%d")
-                        # FIXED: Explicit column names to avoid mismatch
                         db.execute("""
                             INSERT INTO schools (id, name, pass, plan, expiry, extra_students, is_active) 
                             VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (sid, name, hash_pw(pw), plan, exp, 0, 1))
+                        """, (sid, name, hash_pw(pw), plan, exp, extra, 1))
                         db.commit()
-                        st.success(f"Created {name}!")
+                        st.success(f"Created {name}! Plan: {plan} (Limit: {PLAN_LIMITS[plan] + extra} students)")
         
         with c2:
             st.subheader("All Schools")
             for s in db.execute("SELECT * FROM schools WHERE is_active=1").fetchall():
-                with st.expander(f"{s['name']} ({s['id']})"):
-                    st.write(f"Plan: {s['plan']} | Expires: {s['expiry']}")
+                limit = PLAN_LIMITS.get(s["plan"], 30) + s["extra_students"]
+                count = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (s["id"],)).fetchone()[0]
+                with st.expander(f"{s['name']} ({s['id']}) - {count}/{limit} students"):
+                    st.write(f"Plan: {s['plan']} | Limit: {limit} | Expires: {s['expiry']}")
                     if st.button("🗑️ Delete", key=f"del_{s['id']}"):
                         db.execute("UPDATE schools SET is_active=0 WHERE id=?", (s['id'],))
                         db.commit()
@@ -185,6 +210,53 @@ def admin_page():
             st.markdown(f"{emoji} **{b['date'][:10]}**: {b['msg']}")
     
     with t3:
+        st.subheader("💰 Revenue Analytics")
+        
+        c1, c2, c3 = st.columns(3)
+        total_paid = db.execute("SELECT COALESCE(SUM(amount), 0) FROM fees WHERE status='Paid'").fetchone()[0]
+        total_pending = db.execute("SELECT COALESCE(SUM(amount), 0) FROM fees WHERE status='Pending'").fetchone()[0]
+        total_fees = db.execute("SELECT COUNT(*) FROM fees").fetchone()[0]
+        
+        c1.metric("Total Collected", f"₹{total_paid:,}")
+        c2.metric("Pending Amount", f"₹{total_pending:,}")
+        c3.metric("Total Records", total_fees)
+        
+        st.divider()
+        
+        st.subheader("Revenue by Plan")
+        plan_revenue = db.execute("""
+            SELECT s.plan, COUNT(DISTINCT s.id) as schools, COALESCE(SUM(f.amount), 0) as revenue
+            FROM schools s
+            LEFT JOIN fees f ON s.id = f.school_id AND f.status='Paid'
+            WHERE s.is_active=1
+            GROUP BY s.plan
+        """).fetchall()
+        
+        if plan_revenue:
+            cols = st.columns(len(plan_revenue))
+            for idx, row in enumerate(plan_revenue):
+                with cols[idx]:
+                    st.metric(f"{row['plan']}", f"₹{row['revenue']:,}", f"{row['schools']} schools")
+        else:
+            st.info("No revenue data yet")
+        
+        st.divider()
+        
+        st.subheader("Recent Payments")
+        recent = db.execute("""
+            SELECT f.*, s.name as school_name 
+            FROM fees f
+            JOIN schools s ON f.school_id = s.id
+            WHERE f.status='Paid'
+            ORDER BY f.payment_date DESC
+            LIMIT 20
+        """).fetchall()
+        
+        for r in recent:
+            st.markdown(f"**{r['student_name']}** | ₹{r['amount']:,} | {r['month']} | *{r['school_name']}*")
+    
+    with t4:
+        st.subheader("Change Admin Password")
         with st.form("chg_pw"):
             old = st.text_input("Current", type="password")
             new = st.text_input("New", type="password")
@@ -207,7 +279,14 @@ def school_page():
     school = db.execute("SELECT * FROM schools WHERE id=?", (sid,)).fetchone()
     st.title(f"🏫 {school['name']}")
     
+    # CHECK LIMIT FOR DISPLAY
+    can_add, current, limit = check_student_limit(sid)
+    
     with st.sidebar:
+        st.progress(min(current/limit, 1.0), text=f"Students: {current}/{limit}")
+        if current >= limit:
+            st.error("⚠️ Student limit reached!")
+        
         menu = st.radio("Menu", ["📊 Dashboard", "👨‍🎓 Students", "💳 Fees", "📦 Inventory", "🧸 Care Logs"])
         if st.button("🚪 Logout"):
             st.session_state.auth = {"logged_in": False, "role": None, "school_id": None}
@@ -215,33 +294,51 @@ def school_page():
     
     if menu == "📊 Dashboard":
         c1, c2, c3 = st.columns(3)
-        c1.metric("Students", db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0])
+        c1.metric("Students", current)
         c2.metric("Pending", db.execute("SELECT COUNT(*) FROM fees WHERE school_id=? AND status='Pending'", (sid,)).fetchone()[0])
         c3.metric("Revenue", f"₹{db.execute('SELECT COALESCE(SUM(amount),0) FROM fees WHERE school_id=? AND status=\'Paid\'', (sid,)).fetchone()[0]:,}")
     
     elif menu == "👨‍🎓 Students":
         t1, t2 = st.tabs(["➕ Add", "📋 List"])
+        
+        # ADD STUDENT TAB - WITH LIMIT CHECK
         with t1:
-            with st.form("add_student"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    name = st.text_input("Name*")
-                    blood = st.selectbox("Blood", ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"])
-                    allergy = st.text_area("Allergies")
-                    s_class = st.text_input("Class*")
-                with c2:
-                    parent = st.text_input("Parent*")
-                    phone = st.text_input("Phone")
-                    likes = st.text_area("Likes")
-                if st.form_submit_button("✅ Add") and name and s_class and parent:
-                    # FIXED: Explicit column names
-                    db.execute("""
-                        INSERT INTO students (id, name, blood, allergy, parent_name, parent_phone, likes, class, school_id, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (gen_id(), sanitize(name), blood, sanitize(allergy), sanitize(parent), 
-                          sanitize(phone), sanitize(likes), sanitize(s_class), sid, 1))
-                    db.commit()
-                    st.success(f"Added {name}!")
+            if not can_add:
+                st.error(f"❌ Student limit reached! ({current}/{limit})")
+                st.info("Contact admin to upgrade your plan or add extra slots.")
+            else:
+                st.info(f"Student slots: {current}/{limit} used")
+                
+                with st.form("add_student"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        name = st.text_input("Name*")
+                        blood = st.selectbox("Blood", ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"])
+                        allergy = st.text_area("Allergies")
+                        s_class = st.text_input("Class*")
+                    with c2:
+                        parent = st.text_input("Parent*")
+                        phone = st.text_input("Phone")
+                        likes = st.text_area("Likes")
+                    
+                    if st.form_submit_button("✅ Add"):
+                        if not all([name, s_class, parent]):
+                            st.error("Fill required fields (*)")
+                        else:
+                            # DOUBLE-CHECK LIMIT BEFORE INSERTING
+                            can_still_add, _, _ = check_student_limit(sid)
+                            if not can_still_add:
+                                st.error("Limit reached! Cannot add more students.")
+                            else:
+                                db.execute("""
+                                    INSERT INTO students (id, name, blood, allergy, parent_name, parent_phone, likes, class, school_id, is_active)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (gen_id(), sanitize(name), blood, sanitize(allergy), sanitize(parent), 
+                                      sanitize(phone), sanitize(likes), sanitize(s_class), sid, 1))
+                                db.commit()
+                                st.success(f"Added {name}!")
+                                st.rerun()
+        
         with t2:
             for s in db.execute("SELECT * FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchall():
                 with st.expander(f"{s['name']} ({s['class']})"):
@@ -265,7 +362,6 @@ def school_page():
                 month = st.text_input("Month (e.g., Jan 2025)")
                 status = st.selectbox("Status", ["Paid", "Pending"])
                 if st.form_submit_button("💾 Save"):
-                    # FIXED: Explicit column names
                     db.execute("""
                         INSERT INTO fees (id, student_id, student_name, amount, month, status, payment_date, school_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -287,7 +383,6 @@ def school_page():
                 qty = st.number_input("Qty", min_value=0)
                 min_qty = st.number_input("Min", min_value=0, value=10)
                 if st.form_submit_button("➕ Add") and name:
-                    # FIXED: Explicit column names
                     db.execute("""
                         INSERT INTO inventory (id, item_name, category, quantity, min_quantity, school_id)
                         VALUES (?, ?, ?, ?, ?, ?)
