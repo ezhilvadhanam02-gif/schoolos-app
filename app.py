@@ -1,13 +1,11 @@
-# SCHOOL PRO CLOUD v2.0 - COMPLETE
+# SCHOOL PRO CLOUD v2.0 - FIXED VERSION
 import streamlit as st
 import sqlite3
-import uuid
 import re
 import secrets
 from datetime import datetime, timedelta
 import bcrypt
 
-# Page config
 st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
 
 # Database
@@ -20,20 +18,23 @@ def get_db():
     CREATE TABLE IF NOT EXISTS schools (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, pass TEXT NOT NULL,
         plan TEXT DEFAULT 'Basic', expiry TEXT, extra_students INTEGER DEFAULT 0,
-        is_active INTEGER DEFAULT 1
+        is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS students (
         id TEXT PRIMARY KEY, name TEXT, blood TEXT, allergy TEXT,
         parent_name TEXT, parent_phone TEXT, likes TEXT, dislikes TEXT,
-        siblings TEXT, class TEXT, school_id TEXT, is_active INTEGER DEFAULT 1
+        siblings TEXT, class TEXT, school_id TEXT, is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS fees (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
-        amount INTEGER, month TEXT, status TEXT, payment_date TEXT, school_id TEXT
+        amount INTEGER, month TEXT, status TEXT, payment_date TEXT, school_id TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS inventory (
         id TEXT PRIMARY KEY, item_name TEXT, category TEXT,
-        quantity INTEGER, min_quantity INTEGER, school_id TEXT
+        quantity INTEGER, min_quantity INTEGER, school_id TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS care_logs (
         id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
@@ -50,12 +51,14 @@ def get_db():
     );
     """)
     
-    # Default admin
     hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
     conn.execute("INSERT OR IGNORE INTO admin_config VALUES (?, ?)", 
                 ("admin_password_hash", hashed))
     conn.commit()
     return conn
+
+def get_db_conn():
+    return get_db()
 
 # Security
 def sanitize(text):
@@ -89,7 +92,7 @@ def login_page():
         pw = st.text_input("Password", type="password")
         
         if st.button("🔐 Login", type="primary", use_container_width=True):
-            db = get_db()
+            db = get_db_conn()
             
             if user == "admin":
                 h = db.execute("SELECT value FROM admin_config WHERE key='admin_password_hash'").fetchone()
@@ -121,7 +124,7 @@ def login_page():
 # Admin
 def admin_page():
     st.title("👑 Admin")
-    db = get_db()
+    db = get_db_conn()
     
     with st.sidebar:
         if st.button("🚪 Logout"):
@@ -149,8 +152,11 @@ def admin_page():
                         st.error("ID exists")
                     else:
                         exp = (datetime.now() + timedelta(days=365*years)).strftime("%Y-%m-%d")
-                        db.execute("INSERT INTO schools VALUES (?,?,?,?,?,?)",
-                                  (sid, name, hash_pw(pw), plan, exp, 0))
+                        # FIXED: Explicit column names to avoid mismatch
+                        db.execute("""
+                            INSERT INTO schools (id, name, pass, plan, expiry, extra_students, is_active) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (sid, name, hash_pw(pw), plan, exp, 0, 1))
                         db.commit()
                         st.success(f"Created {name}!")
         
@@ -197,7 +203,7 @@ def admin_page():
 # School
 def school_page():
     sid = st.session_state.auth["school_id"]
-    db = get_db()
+    db = get_db_conn()
     school = db.execute("SELECT * FROM schools WHERE id=?", (sid,)).fetchone()
     st.title(f"🏫 {school['name']}")
     
@@ -228,9 +234,12 @@ def school_page():
                     phone = st.text_input("Phone")
                     likes = st.text_area("Likes")
                 if st.form_submit_button("✅ Add") and name and s_class and parent:
-                    db.execute("INSERT INTO students VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                              (gen_id(), sanitize(name), blood, sanitize(allergy), sanitize(parent), sanitize(phone),
-                               sanitize(likes), "", "", sanitize(s_class), sid, 1))
+                    # FIXED: Explicit column names
+                    db.execute("""
+                        INSERT INTO students (id, name, blood, allergy, parent_name, parent_phone, likes, class, school_id, is_active)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (gen_id(), sanitize(name), blood, sanitize(allergy), sanitize(parent), 
+                          sanitize(phone), sanitize(likes), sanitize(s_class), sid, 1))
                     db.commit()
                     st.success(f"Added {name}!")
         with t2:
@@ -256,9 +265,12 @@ def school_page():
                 month = st.text_input("Month (e.g., Jan 2025)")
                 status = st.selectbox("Status", ["Paid", "Pending"])
                 if st.form_submit_button("💾 Save"):
-                    db.execute("INSERT INTO fees VALUES (?,?,?,?,?,?,?,?)",
-                              (gen_id(), stu_dict[sel], sel, amt, month, status,
-                               datetime.now().isoformat() if status=="Paid" else None, sid))
+                    # FIXED: Explicit column names
+                    db.execute("""
+                        INSERT INTO fees (id, student_id, student_name, amount, month, status, payment_date, school_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (gen_id(), stu_dict[sel], sel, amt, month, status,
+                          datetime.now().isoformat() if status=="Paid" else None, sid))
                     db.commit()
                     st.success("Saved!")
         with t2:
@@ -275,8 +287,11 @@ def school_page():
                 qty = st.number_input("Qty", min_value=0)
                 min_qty = st.number_input("Min", min_value=0, value=10)
                 if st.form_submit_button("➕ Add") and name:
-                    db.execute("INSERT INTO inventory VALUES (?,?,?,?,?,?)",
-                              (gen_id(), sanitize(name), cat, qty, min_qty, sid))
+                    # FIXED: Explicit column names
+                    db.execute("""
+                        INSERT INTO inventory (id, item_name, category, quantity, min_quantity, school_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (gen_id(), sanitize(name), cat, qty, min_qty, sid))
                     db.commit()
                     st.success(f"Added {name}!")
         with t2:
@@ -298,8 +313,10 @@ def school_page():
                 with st.form("log_bath"):
                     sub = st.selectbox("Type", ["Pee", "Potty", "Diaper"])
                     if st.form_submit_button("Save"):
-                        db.execute("INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, sub_type) VALUES (?,?,?,?,?,?,?)",
-                                  (gen_id(), stu_dict[sel], sel, "Bathroom", sid, "bathroom", sub.lower()))
+                        db.execute("""
+                            INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, sub_type)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (gen_id(), stu_dict[sel], sel, "Bathroom", sid, "bathroom", sub.lower()))
                         db.commit()
                         st.success("Saved!")
             elif log_type == "Food":
@@ -307,8 +324,10 @@ def school_page():
                     meal = st.selectbox("Meal", ["Breakfast", "Lunch", "Snack"])
                     status = st.selectbox("Status", ["Full", "Half", "Little", "Refused"])
                     if st.form_submit_button("Save"):
-                        db.execute("INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, sub_type, status) VALUES (?,?,?,?,?,?,?,?)",
-                                  (gen_id(), stu_dict[sel], sel, "Food", sid, "food", meal, status))
+                        db.execute("""
+                            INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, sub_type, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (gen_id(), stu_dict[sel], sel, "Food", sid, "food", meal, status))
                         db.commit()
                         st.success("Saved!")
             elif log_type == "Nap":
@@ -316,8 +335,10 @@ def school_page():
                     start = st.time_input("Start")
                     end = st.time_input("End")
                     if st.form_submit_button("Save"):
-                        db.execute("INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, start_time, end_time) VALUES (?,?,?,?,?,?,?,?)",
-                                  (gen_id(), stu_dict[sel], sel, "Nap", sid, "nap", str(start), str(end)))
+                        db.execute("""
+                            INSERT INTO care_logs (id, student_id, student_name, activity, school_id, type, start_time, end_time)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (gen_id(), stu_dict[sel], sel, "Nap", sid, "nap", str(start), str(end)))
                         db.commit()
                         st.success("Saved!")
         with t2:
