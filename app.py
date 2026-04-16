@@ -224,150 +224,167 @@ else:
         with tab4:
             if st.button("Reset Database"):
                 reset_database()
+# ================= SCHOOL =================
+    else:
+        sid = st.session_state.auth["school_id"]
 
-       # ================= SCHOOL =================
-else:
-    sid = st.session_state.auth["school_id"]
+        school = run_query(
+            "SELECT * FROM schools WHERE id=?",
+            (sid,),
+            fetch=True
+        )[0]
 
-    school = run_query("SELECT * FROM schools WHERE id=?", (sid,), fetch=True)[0]
+        st.title(f"🏫 {school['name']}")
 
-    st.title(f"🏫 {school['name']}")
+        students = run_query(
+            "SELECT * FROM students WHERE school_id=?",
+            (sid,),
+            fetch=True
+        )
 
-    students = run_query("SELECT * FROM students WHERE school_id=?", (sid,), fetch=True)
+        menu = st.sidebar.selectbox(
+            "Menu",
+            ["Dashboard", "Students", "Fees", "Inventory", "Care Logs"]
+        )
 
-    menu = st.sidebar.selectbox(
-        "Menu",
-        ["Dashboard", "Students", "Fees", "Inventory", "Care Logs"]
-    )
+        # ================= DASHBOARD =================
+        if menu == "Dashboard":
+            st.metric("Total Students", len(students))
 
-    # ================= DASHBOARD =================
-    if menu == "Dashboard":
-        st.metric("Total Students", len(students))
+        # ================= STUDENTS =================
+        elif menu == "Students":
+            st.subheader("Add Student")
 
-    # ================= STUDENTS =================
-    elif menu == "Students":
-        st.subheader("Add Student")
+            with st.form("add_student"):
+                name = st.text_input("Name")
+                blood = st.text_input("Blood Group")
+                allergy = st.text_input("Allergy")
+                parent = st.text_input("Parent Name")
+                phone = st.text_input("Parent Phone")
+                student_class = st.text_input("Class")
 
-        with st.form("add_student"):
-            name = st.text_input("Name")
-            blood = st.text_input("Blood Group")
-            allergy = st.text_input("Allergy")
-            parent = st.text_input("Parent Name")
-            phone = st.text_input("Parent Phone")
-            student_class = st.text_input("Class")
-
-            if st.form_submit_button("Add Student"):
-                run_query(
-                    "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(uuid.uuid4()), name, blood, allergy,
-                        parent, phone, "", "", "", student_class, sid
+                if st.form_submit_button("Add Student"):
+                    run_query(
+                        "INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()), name, blood, allergy,
+                            parent, phone, "", "", "", student_class, sid
+                        )
                     )
-                )
-                st.success("Student added")
-                st.rerun()
+                    st.success("Student added")
+                    st.rerun()
 
-        st.subheader("Student List")
-        for s in students:
-            st.write(f"{s['name']} | {s['class']} | Parent: {s['parent_name']}")
+            st.subheader("Student List")
+            for s in students:
+                st.write(f"{s['name']} | {s['class']} | Parent: {s['parent_name']}")
 
-    # ================= FEES =================
-    elif menu == "Fees":
-        st.subheader("Add Fee Record")
+        # ================= FEES =================
+        elif menu == "Fees":
+            st.subheader("Add Fee Record")
 
-        if students:
-            student_names = [s["name"] for s in students]
-            selected = st.selectbox("Student", student_names)
+            if students:
+                student_names = [s["name"] for s in students]
+                selected = st.selectbox("Student", student_names)
 
-            amount = st.number_input("Amount", min_value=0)
-            month = st.text_input("Month")
+                amount = st.number_input("Amount", min_value=0)
+                month = st.text_input("Month")
 
-            if st.button("Add Fee"):
-                run_query(
-                    "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(uuid.uuid4()),
-                        "",
-                        selected,
-                        amount,
-                        month,
-                        "Paid",
-                        str(datetime.now()),
-                        sid
+                if st.button("Add Fee"):
+                    run_query(
+                        "INSERT INTO fees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            "",
+                            selected,
+                            amount,
+                            month,
+                            "Paid",
+                            str(datetime.now()),
+                            sid
+                        )
                     )
-                )
-                st.success("Fee recorded")
-                st.rerun()
+                    st.success("Fee recorded")
+                    st.rerun()
 
-        st.subheader("Fee Records")
-        fees = run_query("SELECT * FROM fees WHERE school_id=?", (sid,), fetch=True)
+            st.subheader("Fee Records")
+            fees = run_query(
+                "SELECT * FROM fees WHERE school_id=?",
+                (sid,),
+                fetch=True
+            )
 
-        for f in fees:
-            st.write(f"{f['student_name']} | ₹{f['amount']} | {f['month']}")
+            for f in fees:
+                st.write(f"{f['student_name']} | ₹{f['amount']} | {f['month']}")
 
-    # ================= INVENTORY =================
-    elif menu == "Inventory":
-        st.subheader("Add Item")
+        # ================= INVENTORY =================
+        elif menu == "Inventory":
+            st.subheader("Add Item")
 
-        with st.form("add_item"):
-            name = st.text_input("Item Name")
-            category = st.text_input("Category")
-            qty = st.number_input("Quantity", min_value=0)
-            min_qty = st.number_input("Min Quantity", min_value=0)
+            with st.form("add_item"):
+                name = st.text_input("Item Name")
+                category = st.text_input("Category")
+                qty = st.number_input("Quantity", min_value=0)
+                min_qty = st.number_input("Min Quantity", min_value=0)
 
-            if st.form_submit_button("Add Item"):
-                run_query(
-                    "INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        str(uuid.uuid4()),
-                        name,
-                        category,
-                        qty,
-                        min_qty,
-                        sid
+                if st.form_submit_button("Add Item"):
+                    run_query(
+                        "INSERT INTO inventory VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            name,
+                            category,
+                            qty,
+                            min_qty,
+                            sid
+                        )
                     )
-                )
-                st.success("Item added")
-                st.rerun()
+                    st.success("Item added")
+                    st.rerun()
 
-        st.subheader("Inventory List")
-        items = run_query("SELECT * FROM inventory WHERE school_id=?", (sid,), fetch=True)
+            st.subheader("Inventory List")
+            items = run_query(
+                "SELECT * FROM inventory WHERE school_id=?",
+                (sid,),
+                fetch=True
+            )
 
-        for i in items:
-            alert = "⚠️ Low Stock" if i["quantity"] <= i["min_quantity"] else ""
-            st.write(f"{i['item_name']} | Qty: {i['quantity']} {alert}")
+            for i in items:
+                alert = "⚠️ Low Stock" if i["quantity"] <= i["min_quantity"] else ""
+                st.write(f"{i['item_name']} | Qty: {i['quantity']} {alert}")
 
-    # ================= CARE LOGS =================
-    elif menu == "Care Logs":
-        st.subheader("Add Care Log")
+        # ================= CARE LOGS =================
+        elif menu == "Care Logs":
+            st.subheader("Add Care Log")
 
-        if students:
-            student_names = [s["name"] for s in students]
-            selected = st.selectbox("Student", student_names)
+            if students:
+                student_names = [s["name"] for s in students]
+                selected = st.selectbox("Student", student_names)
 
-            activity = st.text_input("Activity")
-            notes = st.text_area("Notes")
+                activity = st.text_input("Activity")
+                notes = st.text_area("Notes")
 
-            if st.button("Save Log"):
-                run_query(
-                    "INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        str(uuid.uuid4()),
-                        "",
-                        selected,
-                        activity,
-                        notes,
-                        str(datetime.now()),
-                        sid
+                if st.button("Save Log"):
+                    run_query(
+                        "INSERT INTO care_logs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            "",
+                            selected,
+                            activity,
+                            notes,
+                            str(datetime.now()),
+                            sid
+                        )
                     )
-                )
-                st.success("Log saved")
-                st.rerun()
+                    st.success("Log saved")
+                    st.rerun()
 
-        st.subheader("Logs")
-        logs = run_query("SELECT * FROM care_logs WHERE school_id=?", (sid,), fetch=True)
+            st.subheader("Logs")
+            logs = run_query(
+                "SELECT * FROM care_logs WHERE school_id=?",
+                (sid,),
+                fetch=True
+            )
 
-        for l in logs:
-            st.write(f"{l['student_name']} | {l['activity']} | {l['time']}")     
-
-        
+            for l in logs:
+                st.write(f"{l['student_name']} | {l['activity']} | {l['time']}")
