@@ -10,7 +10,7 @@ from PIL import Image
 import json
 
 # =================== CONFIG ===================
-st.set_page_config(page_title="SchoolOS Pro — SaaS Platform", layout="wide", page_icon="🏫")
+st.set_page_config(page_title="SchoolOS Pro", layout="wide", page_icon="🏫")
 
 st.markdown("""
 <style>
@@ -22,7 +22,7 @@ st.markdown("""
     .login-box { max-width: 480px; margin: auto; padding: 2rem; border: 1px solid #ddd; border-radius: 12px; background: #fff; }
     .feature-yes { color: #2e7d32; font-weight: bold; }
     .feature-no { color: #c62828; text-decoration: line-through; opacity: 0.6; }
-    .revenue-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: 12px; text-align: center; }
+    .school-id-box { background: #e3f2fd; border-left: 4px solid #1f77b4; padding: 10px; border-radius: 6px; margin: 10px 0; font-family: monospace; font-size: 1.1rem; }
     @media (max-width: 768px) { .main-header { font-size: 1.6rem; } }
 </style>
 """, unsafe_allow_html=True)
@@ -32,156 +32,82 @@ st.markdown("""
 def get_db():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    
     conn.executescript("""
-        CREATE TABLE IF NOT EXISTS admin_config (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );
+        CREATE TABLE IF NOT EXISTS admin_config (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS plans (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            max_students INTEGER DEFAULT 30,
-            yearly_price INTEGER DEFAULT 0,
-            extra_student_price INTEGER DEFAULT 0,
-            features TEXT DEFAULT '{}',
-            is_active INTEGER DEFAULT 1,
-            is_popular INTEGER DEFAULT 0,
-            sort_order INTEGER DEFAULT 0,
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, max_students INTEGER DEFAULT 30,
+            yearly_price INTEGER DEFAULT 0, extra_student_price INTEGER DEFAULT 0,
+            features TEXT DEFAULT '{}', is_active INTEGER DEFAULT 1,
+            is_popular INTEGER DEFAULT 0, sort_order INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS schools (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            pass TEXT NOT NULL,
-            email TEXT,
-            phone TEXT,
-            plan_id TEXT,
-            max_students INTEGER DEFAULT 30,
-            expiry TEXT,
-            is_active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, pass TEXT NOT NULL,
+            email TEXT, phone TEXT, plan_id TEXT, max_students INTEGER DEFAULT 30,
+            expiry TEXT, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS subscriptions (
-            id TEXT PRIMARY KEY,
-            school_id TEXT,
-            plan_id TEXT,
-            amount_paid INTEGER,
-            payment_status TEXT DEFAULT 'Pending',
-            payment_id TEXT,
-            razorpay_order_id TEXT,
-            start_date TEXT,
-            end_date TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY, school_id TEXT, plan_id TEXT,
+            amount_paid INTEGER, payment_status TEXT DEFAULT 'Pending',
+            payment_id TEXT, razorpay_order_id TEXT,
+            start_date TEXT, end_date TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS teachers (
-            id TEXT PRIMARY KEY,
-            school_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            pass TEXT NOT NULL,
-            role TEXT DEFAULT 'teacher',
-            is_active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL, name TEXT NOT NULL,
+            phone TEXT NOT NULL, pass TEXT NOT NULL, role TEXT DEFAULT 'teacher',
+            is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS teacher_sessions (
-            id TEXT PRIMARY KEY,
-            teacher_id TEXT NOT NULL,
-            school_id TEXT NOT NULL,
-            login_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            last_active TEXT DEFAULT CURRENT_TIMESTAMP,
+            id TEXT PRIMARY KEY, teacher_id TEXT NOT NULL, school_id TEXT NOT NULL,
+            login_time TEXT DEFAULT CURRENT_TIMESTAMP, last_active TEXT DEFAULT CURRENT_TIMESTAMP,
             is_active INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS classes (
-            id TEXT PRIMARY KEY,
-            class_name TEXT NOT NULL,
-            section TEXT,
-            school_id TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1,
+            id TEXT PRIMARY KEY, class_name TEXT NOT NULL, section TEXT,
+            school_id TEXT NOT NULL, is_active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS programs (
-            id TEXT PRIMARY KEY,
-            program_name TEXT NOT NULL,
-            class_id TEXT NOT NULL,
-            school_id TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1,
+            id TEXT PRIMARY KEY, program_name TEXT NOT NULL, class_id TEXT NOT NULL,
+            school_id TEXT NOT NULL, is_active INTEGER DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS students (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            mother_name TEXT,
-            father_name TEXT,
-            dob TEXT,
-            age TEXT,
-            blood_group TEXT,
-            program_id TEXT,
-            class_id TEXT,
-            phone TEXT,
-            email TEXT,
-            guardian_name TEXT,
-            likes TEXT,
-            dislikes TEXT,
-            school_id TEXT NOT NULL,
-            is_active INTEGER DEFAULT 1,
-            profile_photo TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, mother_name TEXT,
+            father_name TEXT, dob TEXT, age TEXT, blood_group TEXT,
+            allergy TEXT, program_id TEXT, class_id TEXT, phone TEXT, email TEXT,
+            guardian_name TEXT, likes TEXT, dislikes TEXT,
+            school_id TEXT NOT NULL, is_active INTEGER DEFAULT 1,
+            profile_photo TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS attendance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id TEXT NOT NULL,
-            class_id TEXT NOT NULL,
-            date TEXT NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT, student_id TEXT NOT NULL,
+            class_id TEXT NOT NULL, date TEXT NOT NULL,
             status TEXT NOT NULL CHECK(status IN ('Present','Absent','Late','Half Day')),
-            in_time TEXT,
-            out_time TEXT,
-            notes TEXT,
-            marked_by TEXT,
-            marked_at TEXT DEFAULT CURRENT_TIMESTAMP
+            in_time TEXT, out_time TEXT, notes TEXT,
+            marked_by TEXT, marked_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS care_logs (
-            id TEXT PRIMARY KEY,
-            student_id TEXT,
-            student_name TEXT,
-            activity TEXT,
-            notes TEXT,
-            time TEXT DEFAULT CURRENT_TIMESTAMP,
-            school_id TEXT,
-            type TEXT,
-            sub_type TEXT,
-            status TEXT,
-            start_time TEXT,
-            end_time TEXT
+            id TEXT PRIMARY KEY, student_id TEXT, student_name TEXT,
+            activity TEXT, notes TEXT, time TEXT DEFAULT CURRENT_TIMESTAMP,
+            school_id TEXT, type TEXT, sub_type TEXT, status TEXT,
+            start_time TEXT, end_time TEXT
         );
     """)
     
     h = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
     conn.execute("INSERT OR IGNORE INTO admin_config VALUES (?,?)", ("admin_password_hash", h))
     
-    # Seed default plans if none exist
     if conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0] == 0:
         default_plans = [
-            ("plan_basic", "Basic", 30, 2999, 0, json.dumps({
-                "students": True, "attendance": True, "care_logs": True,
-                "reports": False, "photos": False, "whatsapp": False,
-                "multi_teacher": False, "max_teachers": 1
-            }), 1, 0, 1),
-            ("plan_std", "Standard", 80, 4999, 0, json.dumps({
-                "students": True, "attendance": True, "care_logs": True,
-                "reports": True, "photos": False, "whatsapp": False,
-                "multi_teacher": True, "max_teachers": 2
-            }), 1, 0, 2),
-            ("plan_prem", "Premium", 500, 7999, 100, json.dumps({
-                "students": True, "attendance": True, "care_logs": True,
-                "reports": True, "photos": True, "whatsapp": True,
-                "multi_teacher": True, "max_teachers": 10
-            }), 1, 1, 3),
-            ("plan_ent", "Enterprise", 9999, 11999, 0, json.dumps({
-                "students": True, "attendance": True, "care_logs": True,
-                "reports": True, "photos": True, "whatsapp": True,
-                "multi_teacher": True, "max_teachers": 50
-            }), 1, 0, 4),
+            ("plan_basic", "Basic", 30, 2999, 0,
+             json.dumps({"students":True,"attendance":True,"care_logs":True,"reports":False,"photos":False,"whatsapp":False,"multi_teacher":False,"max_teachers":1,"broadcast":True}), 1, 0, 1),
+            ("plan_std", "Standard", 80, 4999, 0,
+             json.dumps({"students":True,"attendance":True,"care_logs":True,"reports":True,"photos":False,"whatsapp":False,"multi_teacher":True,"max_teachers":2,"broadcast":True}), 1, 0, 2),
+            ("plan_prem", "Premium", 500, 7999, 100,
+             json.dumps({"students":True,"attendance":True,"care_logs":True,"reports":True,"photos":True,"whatsapp":True,"multi_teacher":True,"max_teachers":10,"broadcast":True}), 1, 1, 3),
+            ("plan_ent", "Enterprise", 9999, 11999, 0,
+             json.dumps({"students":True,"attendance":True,"care_logs":True,"reports":True,"photos":True,"whatsapp":True,"multi_teacher":True,"max_teachers":50,"broadcast":True}), 1, 0, 4),
         ]
         conn.executemany("""
             INSERT INTO plans (id, name, max_students, yearly_price, extra_student_price, features, is_active, is_popular, sort_order)
@@ -228,7 +154,7 @@ def compress_image(uploaded_file, max_size=(600, 600), quality=60):
         img.save(buf, format='JPEG', quality=quality, optimize=True)
         return base64.b64encode(buf.getvalue()).decode()
     except Exception as e:
-        st.error(f"Image processing error: {e}")
+        st.error(f"Image error: {e}")
         return None
 
 def calc_age(dob_str):
@@ -274,9 +200,7 @@ def logout_teacher_session(session_id):
 def get_plan_features(plan_id):
     db = get_db_conn()
     row = db.execute("SELECT features FROM plans WHERE id=?", (plan_id,)).fetchone()
-    if not row:
-        return {}
-    return json.loads(row["features"] or '{}')
+    return json.loads(row["features"] or '{}') if row else {}
 
 def get_school_plan(school_id):
     db = get_db_conn()
@@ -284,9 +208,7 @@ def get_school_plan(school_id):
     if not s:
         return None, 0, {}
     p = db.execute("SELECT * FROM plans WHERE id=?", (s["plan_id"],)).fetchone()
-    if not p:
-        return None, 0, {}
-    return p, s["max_students"], json.loads(p["features"] or '{}')
+    return (p, s["max_students"], json.loads(p["features"] or '{}')) if p else (None, 0, {})
 
 # =================== SESSION ===================
 if "auth" not in st.session_state:
@@ -310,21 +232,21 @@ def require_auth(allowed_roles):
         st.stop()
     if st.session_state.auth["role"] == "teacher" and st.session_state.auth.get("session_id"):
         if not is_session_active(st.session_state.auth["session_id"]):
-            st.error("Your session was logged out from another device.")
+            st.error("Session logged out from another device.")
             st.session_state.auth = {
                 "logged_in": False, "role": None, "school_id": None,
                 "user_id": None, "name": None, "session_id": None
             }
             st.rerun()
 
-# =================== PUBLIC LANDING ===================
+# =================== LANDING ===================
 def landing_page():
     st.markdown('<p class="main-header">🏫 SchoolOS Pro</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">The Complete Daycare & Preschool Management Platform</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Complete Daycare & Preschool Management</p>', unsafe_allow_html=True)
     
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        tab_login, tab_reg = st.tabs(["🔐 School Login", "📝 New School Registration"])
+        tab_login, tab_reg = st.tabs(["🔐 Login", "📝 Register School"])
         
         with tab_login:
             st.markdown('<div class="login-box">', unsafe_allow_html=True)
@@ -358,7 +280,7 @@ def landing_page():
                     else:
                         try:
                             if datetime.now() > datetime.strptime(s["expiry"], "%Y-%m-%d"):
-                                st.error("Subscription expired. Renew now.")
+                                st.error("Subscription expired.")
                                 return
                         except:
                             pass
@@ -370,14 +292,15 @@ def landing_page():
             
             elif role == "Teacher":
                 school_id = st.text_input("School ID", key="t_school")
-                phone = st.text_input("Phone Number", key="t_phone")
+                phone = st.text_input("Phone", key="t_phone")
                 pw = st.text_input("Password", type="password", key="t_pw")
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Login", type="primary", use_container_width=True):
                         db = get_db_conn()
-                        t = db.execute("SELECT * FROM teachers WHERE school_id=? AND phone=? AND is_active=1",
-                                       (school_id, phone)).fetchone()
+                        t = db.execute("""
+                            SELECT * FROM teachers WHERE school_id=? AND phone=? AND is_active=1
+                        """, (school_id, phone)).fetchone()
                         if not t:
                             st.error("Teacher not found")
                         elif not check_pw(pw, t["pass"]):
@@ -399,27 +322,29 @@ def landing_page():
                     with st.form("teacher_reg"):
                         reg_school = st.text_input("School ID (from invite)")
                         reg_name = st.text_input("Full Name")
-                        reg_phone = st.text_input("Phone Number")
-                        reg_pw = st.text_input("Create Password", type="password")
+                        reg_phone = st.text_input("Phone")
+                        reg_pw = st.text_input("Password", type="password")
                         reg_pw2 = st.text_input("Confirm Password", type="password")
-                        if st.form_submit_button("✅ Register"):
+                        if st.form_submit_button("Register"):
                             if not all([reg_school, reg_name, reg_phone, reg_pw]):
                                 st.error("Fill all fields")
                             elif reg_pw != reg_pw2:
                                 st.error("Passwords don't match")
                             elif len(reg_pw) < 6:
-                                st.error("Password too short")
+                                st.error("Too short")
                             else:
                                 db = get_db_conn()
                                 if not db.execute("SELECT 1 FROM schools WHERE id=? AND is_active=1", (reg_school,)).fetchone():
                                     st.error("Invalid School ID")
                                 elif db.execute("SELECT 1 FROM teachers WHERE phone=?", (reg_phone,)).fetchone():
-                                    st.error("Phone already registered")
+                                    st.error("Phone exists")
                                 else:
-                                    db.execute("INSERT INTO teachers (id, school_id, name, phone, pass) VALUES (?,?,?,?,?)",
-                                               (gen_id(), reg_school, sanitize(reg_name), sanitize(reg_phone), hash_pw(reg_pw)))
+                                    db.execute("""
+                                        INSERT INTO teachers (id, school_id, name, phone, pass)
+                                        VALUES (?,?,?,?,?)
+                                    """, (gen_id(), reg_school, sanitize(reg_name), sanitize(reg_phone), hash_pw(reg_pw)))
                                     db.commit()
-                                    st.success("✅ Registered! You can now log in.")
+                                    st.success("Registered! You can log in now.")
                                     st.session_state.show_teacher_reg = False
                                     st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
@@ -427,39 +352,32 @@ def landing_page():
         with tab_reg:
             school_registration_flow()
 
-# =================== SCHOOL SELF-REGISTRATION ===================
+# =================== SCHOOL REGISTRATION ===================
 def school_registration_flow():
     db = get_db_conn()
     plans = db.execute("SELECT * FROM plans WHERE is_active=1 ORDER BY sort_order").fetchall()
     
     st.subheader("Choose Your Plan")
-    st.caption("Select a plan that fits your school. Pay securely via Razorpay.")
-    
-    # Display plan cards
     cols = st.columns(len(plans))
-    selected_plan = None
     for idx, p in enumerate(plans):
         features = json.loads(p["features"] or '{}')
         with cols[idx]:
             popular_class = "plan-card plan-popular" if p["is_popular"] else "plan-card"
             st.markdown(f'<div class="{popular_class}">', unsafe_allow_html=True)
             if p["is_popular"]:
-                st.markdown("🔥 **MOST POPULAR**")
+                st.markdown("🔥 **POPULAR**")
             st.markdown(f"### {p['name']}")
-            st.markdown(f"<h2>₹{p['yearly_price']:,}<small>/year</small></h2>", unsafe_allow_html=True)
-            st.markdown(f"**{p['max_students']}** Students Included")
+            st.markdown(f"<h2>₹{p['yearly_price']:,}<small>/yr</small></h2>", unsafe_allow_html=True)
+            st.write(f"**{p['max_students']}** Students")
             if p["extra_student_price"] > 0:
-                st.caption(f"+₹{p['extra_student_price']} per extra student")
-            
+                st.caption(f"+₹{p['extra_student_price']}/extra")
             st.divider()
             for feat, enabled in features.items():
-                icon = "✅" if enabled else "❌"
                 label = feat.replace("_", " ").title()
                 if enabled:
-                    st.markdown(f"<span class='feature-yes'>{icon} {label}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span class='feature-yes'>✅ {label}</span>", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"<span class='feature-no'>{icon} {label}</span>", unsafe_allow_html=True)
-            
+                    st.markdown(f"<span class='feature-no'>❌ {label}</span>", unsafe_allow_html=True)
             if st.button(f"Select {p['name']}", key=f"sel_plan_{p['id']}", use_container_width=True):
                 st.session_state.selected_plan_id = p["id"]
             st.markdown('</div>', unsafe_allow_html=True)
@@ -469,92 +387,77 @@ def school_registration_flow():
         plan = db.execute("SELECT * FROM plans WHERE id=?", (selected_plan_id,)).fetchone()
         if plan:
             st.divider()
-            st.subheader(f"📝 Register for {plan['name']} Plan")
-            
+            st.subheader(f"Register for {plan['name']}")
             with st.form("school_reg"):
                 c1, c2 = st.columns(2)
                 with c1:
-                    s_name = st.text_input("School Name *", placeholder="Little Angels School")
+                    s_name = st.text_input("School Name *", placeholder="Little Angels")
                     s_email = st.text_input("Email *", placeholder="school@email.com")
                 with c2:
                     s_phone = st.text_input("Phone *", placeholder="9876543210")
-                    s_pass = st.text_input("Create Password *", type="password")
+                    s_pass = st.text_input("Password *", type="password")
                     s_pass2 = st.text_input("Confirm Password *", type="password")
                 
                 st.info(f"""
-                **Subscription Summary:**
+                **Summary:**
                 - Plan: {plan['name']}
                 - Students: Up to {plan['max_students']}
-                - Amount: ₹{plan['yearly_price']:,} / year
+                - Amount: ₹{plan['yearly_price']:,}/year
                 """)
                 
-                # Razorpay integration placeholder
-                st.markdown("---")
-                st.markdown("💳 **Payment via Razorpay** (Test Mode)")
-                st.caption("In production, this opens Razorpay checkout. For demo, simulate payment below.")
+                pay_method = st.radio("Payment", ["Razorpay (Auto)", "Bank Transfer (Manual)"], horizontal=True)
                 
-                pay_method = st.radio("Payment Method", ["Razorpay (Recommended)", "UPI / Bank Transfer (Manual)"], horizontal=True)
-                
-                if st.form_submit_button("✅ Complete Registration & Pay", use_container_width=True):
+                if st.form_submit_button("Complete Registration & Pay", use_container_width=True):
                     if not all([s_name, s_email, s_phone, s_pass]):
-                        st.error("Please fill all required fields")
+                        st.error("Fill all required fields")
                     elif s_pass != s_pass2:
-                        st.error("Passwords do not match")
+                        st.error("Passwords don't match")
                     elif len(s_pass) < 6:
-                        st.error("Password must be at least 6 characters")
-                    elif db.execute("SELECT 1 FROM schools WHERE id=?", (sanitize(s_name).lower().replace(" ", "_"),)).fetchone():
-                        st.error("A school with similar ID exists. Try a different name.")
+                        st.error("Password too short")
                     else:
-                        # Generate school ID from name
                         school_id = sanitize(s_name).lower().replace(" ", "_") + "_" + secrets.token_hex(3)
                         expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
                         
-                        # Create school (inactive until payment confirmed)
                         db.execute("""
                             INSERT INTO schools (id, name, pass, email, phone, plan_id, max_students, expiry, is_active)
                             VALUES (?,?,?,?,?,?,?,?,0)
                         """, (school_id, sanitize(s_name), hash_pw(s_pass), sanitize(s_email), sanitize(s_phone),
                               plan['id'], plan['max_students'], expiry))
                         
-                        # Record subscription
                         sub_id = gen_id()
                         db.execute("""
                             INSERT INTO subscriptions (id, school_id, plan_id, amount_paid, payment_status, start_date, end_date)
                             VALUES (?,?,?,?,?,?,?)
-                        """, (sub_id, school_id, plan['id'], plan['yearly_price'], 
-                              'Paid' if pay_method == "Razorpay (Recommended)" else 'Pending',
+                        """, (sub_id, school_id, plan['id'], plan['yearly_price'],
+                              'Paid' if pay_method == "Razorpay (Auto)" else 'Pending',
                               datetime.now().isoformat(), expiry))
                         db.commit()
                         
-                        if pay_method == "Razorpay (Recommended)":
-                            # Simulate Razorpay success
+                        if pay_method == "Razorpay (Auto)":
                             db.execute("UPDATE schools SET is_active=1 WHERE id=?", (school_id,))
                             db.execute("UPDATE subscriptions SET payment_status='Paid', payment_id=? WHERE id=?",
                                        ("pay_demo_" + secrets.token_hex(4), sub_id))
                             db.commit()
-                            
                             st.session_state.payment_success = {
-                                "school_id": school_id,
-                                "name": s_name,
-                                "plan": plan['name'],
-                                "amount": plan['yearly_price']
+                                "school_id": school_id, "name": s_name,
+                                "plan": plan['name'], "amount": plan['yearly_price']
                             }
                         else:
-                            st.warning("⏳ Your registration is pending manual payment verification. You will receive access after confirmation.")
+                            st.warning("Pending manual verification. Admin will activate after payment confirmation.")
                         st.rerun()
     
     if st.session_state.payment_success:
-        success = st.session_state.payment_success
+        s = st.session_state.payment_success
         st.balloons()
         st.success(f"""
         🎉 Registration Successful!
         
-        **School:** {success['name']}
-        **School ID:** `{success['school_id']}`
-        **Plan:** {success['plan']}
-        **Amount Paid:** ₹{success['amount']:,}
+        **School:** {s['name']}
+        **ID:** `{s['school_id']}`
+        **Plan:** {s['plan']}
+        **Paid:** ₹{s['amount']:,}
         
-        You can now log in using your School ID and Password.
+        Log in with your School ID and Password.
         """)
         if st.button("Go to Login"):
             del st.session_state.payment_success
@@ -577,30 +480,25 @@ def admin_page():
             }
             st.rerun()
         st.divider()
-        total_schools = db.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
-        active_schools = db.execute("SELECT COUNT(*) FROM schools WHERE is_active=1").fetchone()[0]
-        total_revenue = db.execute("SELECT COALESCE(SUM(amount_paid),0) FROM subscriptions WHERE payment_status='Paid'").fetchone()[0]
-        st.metric("Total Schools", total_schools)
-        st.metric("Active", active_schools)
-        st.metric("Total Revenue", f"₹{total_revenue:,}")
+        ts = db.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
+        active = db.execute("SELECT COUNT(*) FROM schools WHERE is_active=1").fetchone()[0]
+        rev = db.execute("SELECT COALESCE(SUM(amount_paid),0) FROM subscriptions WHERE payment_status='Paid'").fetchone()[0]
+        st.metric("Schools", ts)
+        st.metric("Active", active)
+        st.metric("Revenue", f"₹{rev:,}")
     
-    tab1, tab2, tab3 = st.tabs(["💰 Revenue & Subscriptions", "📋 Plan Management", "⚙️ Settings"])
+    t1, t2, t3 = st.tabs(["💰 Revenue", "📋 Plans", "⚙️ Settings"])
     
-    # REVENUE TAB
-    with tab1:
-        st.header("💰 Revenue Dashboard")
-        
-        # Top stats
+    with t1:
+        st.header("Revenue Dashboard")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Revenue", f"₹{total_revenue:,}")
-        c2.metric("This Month", f"₹{db.execute('''SELECT COALESCE(SUM(amount_paid),0) FROM subscriptions 
-                      WHERE payment_status='Paid' AND strftime('%Y-%m',created_at)=?''', 
-                      (datetime.now().strftime('%Y-%m'),)).fetchone()[0]:,}")
-        c3.metric("Active Subscriptions", db.execute("SELECT COUNT(*) FROM subscriptions WHERE payment_status='Paid'").fetchone()[0])
-        c4.metric("Pending Payments", db.execute("SELECT COUNT(*) FROM subscriptions WHERE payment_status='Pending'").fetchone()[0])
+        c1.metric("Total Revenue", f"₹{rev:,}")
+        c2.metric("This Month", f"₹{db.execute('SELECT COALESCE(SUM(amount_paid),0) FROM subscriptions WHERE payment_status=? AND strftime(?,created_at)=?', ('Paid','%Y-%m',datetime.now().strftime('%Y-%m'))).fetchone()[0]:,}")
+        c3.metric("Paid Subs", db.execute("SELECT COUNT(*) FROM subscriptions WHERE payment_status='Paid'").fetchone()[0])
+        c4.metric("Pending", db.execute("SELECT COUNT(*) FROM subscriptions WHERE payment_status='Pending'").fetchone()[0])
         
         st.divider()
-        st.subheader("📚 All Subscriptions")
+        st.subheader("All Subscriptions")
         subs = db.execute("""
             SELECT s.name, s.email, s.phone, s.is_active, s.created_at,
                    p.name as plan_name, p.yearly_price,
@@ -611,95 +509,77 @@ def admin_page():
             ORDER BY sub.created_at DESC
         """).fetchall()
         
-        if not subs:
-            st.info("No subscriptions yet")
-        else:
+        if subs:
             data = []
             for sub in subs:
                 data.append({
-                    "School": sub['name'],
-                    "Email": sub['email'],
-                    "Phone": sub['phone'],
-                    "Plan": sub['plan_name'],
-                    "Amount": f"₹{sub['amount_paid']:,}",
-                    "Status": sub['payment_status'],
-                    "Payment ID": sub['payment_id'] or "-",
+                    "School": sub['name'], "Email": sub['email'], "Phone": sub['phone'],
+                    "Plan": sub['plan_name'], "Amount": f"₹{sub['amount_paid']:,}",
+                    "Status": sub['payment_status'], "Payment ID": sub['payment_id'] or "-",
                     "Start": sub['start_date'][:10] if sub['start_date'] else "-",
                     "End": sub['end_date'][:10] if sub['end_date'] else "-",
                     "Active": "✅" if sub['is_active'] else "⏳"
                 })
             st.dataframe(data, use_container_width=True, hide_index=True)
+        else:
+            st.info("No subscriptions yet")
     
-    # PLANS TAB
-    with tab2:
-        st.header("📋 Plan Configuration")
-        st.caption("Control what each plan includes, pricing, and student limits. Changes apply to NEW subscriptions only.")
-        
-        with st.expander("➕ Create New Plan"):
+    with t2:
+        st.header("Plan Configuration")
+        with st.expander("➕ Create Plan"):
             with st.form("create_plan"):
                 pname = st.text_input("Plan Name *")
                 pstudents = st.number_input("Max Students", min_value=1, value=30)
                 pprice = st.number_input("Yearly Price (₹)", min_value=0, value=2999, step=500)
-                pextra = st.number_input("Extra Student Price (₹)", min_value=0, value=0)
-                
-                st.subheader("Features Included")
-                f_attendance = st.checkbox("Attendance System", value=True)
+                pextra = st.number_input("Extra Student Price", min_value=0, value=0)
+                f_att = st.checkbox("Attendance", value=True)
                 f_care = st.checkbox("Care Logs", value=True)
-                f_reports = st.checkbox("Reports & Analytics")
-                f_photos = st.checkbox("Photo Gallery (Premium)")
-                f_whatsapp = st.checkbox("WhatsApp Integration")
-                f_multiteacher = st.checkbox("Multi-Teacher Login")
-                f_max_teachers = st.number_input("Max Teachers Allowed", min_value=1, value=1)
-                f_broadcast = st.checkbox("Broadcast Messages", value=True)
-                
-                is_popular = st.checkbox("Mark as Popular", value=False)
-                
-                if st.form_submit_button("✅ Save Plan"):
+                f_rep = st.checkbox("Reports")
+                f_photo = st.checkbox("Photo Gallery")
+                f_wa = st.checkbox("WhatsApp")
+                f_multi = st.checkbox("Multi-Teacher")
+                f_maxt = st.number_input("Max Teachers", min_value=1, value=1)
+                f_bc = st.checkbox("Broadcast", value=True)
+                is_pop = st.checkbox("Popular")
+                if st.form_submit_button("Save Plan"):
                     features = json.dumps({
-                        "attendance": f_attendance,
-                        "care_logs": f_care,
-                        "reports": f_reports,
-                        "photos": f_photos,
-                        "whatsapp": f_whatsapp,
-                        "multi_teacher": f_multiteacher,
-                        "max_teachers": f_max_teachers,
-                        "broadcast": f_broadcast
+                        "attendance": f_att, "care_logs": f_care, "reports": f_rep,
+                        "photos": f_photo, "whatsapp": f_wa, "multi_teacher": f_multi,
+                        "max_teachers": f_maxt, "broadcast": f_bc
                     })
                     db.execute("""
                         INSERT INTO plans (id, name, max_students, yearly_price, extra_student_price, features, is_active, is_popular)
                         VALUES (?,?,?,?,?,?,1,?)
-                    """, (gen_id(), sanitize(pname), pstudents, pprice, pextra, features, 1 if is_popular else 0))
+                    """, (gen_id(), sanitize(pname), pstudents, pprice, pextra, features, 1 if is_pop else 0))
                     db.commit()
-                    st.success(f"✅ Plan '{pname}' created!")
+                    st.success("Plan created!")
                     st.rerun()
         
-        st.divider()
-        st.subheader("✏️ Manage Existing Plans")
+        st.subheader("Manage Plans")
         plans = db.execute("SELECT * FROM plans ORDER BY sort_order").fetchall()
         for p in plans:
             features = json.loads(p["features"] or '{}')
-            with st.expander(f"{'🔥 ' if p['is_popular'] else ''}{p['name']} — ₹{p['yearly_price']:,} ({p['max_students']} students)"):
+            with st.expander(f"{'🔥 ' if p['is_popular'] else ''}{p['name']} — ₹{p['yearly_price']:,}"):
                 c1, c2 = st.columns([3,1])
                 with c1:
-                    st.write(f"**Students:** {p['max_students']} | **Extra:** ₹{p['extra_student_price']} | **Active:** {'Yes' if p['is_active'] else 'No'}")
-                    st.write("**Features:** " + ", ".join([k.replace("_"," ").title() for k,v in features.items() if v and isinstance(v, bool)]))
+                    st.write(f"Students: {p['max_students']} | Extra: ₹{p['extra_student_price']}")
+                    st.write("Features: " + ", ".join([k.replace("_"," ").title() for k,v in features.items() if v and isinstance(v, bool)]))
                 with c2:
-                    if st.button("🗑️ Deactivate", key=f"del_plan_{p['id']}"):
+                    if st.button("Deactivate", key=f"del_plan_{p['id']}"):
                         db.execute("UPDATE plans SET is_active=0 WHERE id=?", (p['id'],))
                         db.commit()
                         st.rerun()
     
-    # SETTINGS TAB
-    with tab3:
-        st.subheader("⚙️ Admin Password")
+    with t3:
+        st.subheader("Admin Password")
         with st.form("admin_pw"):
-            old = st.text_input("Current Password", type="password")
-            new = st.text_input("New Password", type="password")
+            old = st.text_input("Current", type="password")
+            new = st.text_input("New", type="password")
             conf = st.text_input("Confirm", type="password")
             if st.form_submit_button("Update"):
                 cur = db.execute("SELECT value FROM admin_config WHERE key='admin_password_hash'").fetchone()[0]
                 if not check_pw(old, cur):
-                    st.error("Wrong password")
+                    st.error("Wrong")
                 elif new != conf:
                     st.error("Mismatch")
                 elif len(new) < 8:
@@ -707,7 +587,7 @@ def admin_page():
                 else:
                     db.execute("UPDATE admin_config SET value=? WHERE key='admin_password_hash'", (hash_pw(new),))
                     db.commit()
-                    st.success("✅ Updated")
+                    st.success("Updated")
 
 # =================== SCHOOL SHARED ===================
 def school_sidebar():
@@ -722,6 +602,12 @@ def school_sidebar():
             st.caption(f"Plan: {plan['name']}")
         st.divider()
         
+        # SHOW SCHOOL ID PROMINENTLY
+        st.markdown("**Your School ID**")
+        st.markdown(f"<div class='school-id-box'>{sid}</div>", unsafe_allow_html=True)
+        st.caption("Share this ID with teachers to register")
+        st.divider()
+        
         menu_items = ["📊 Dashboard"]
         if auth["role"] == "head":
             menu_items.append("👨‍🏫 Teachers")
@@ -734,8 +620,6 @@ def school_sidebar():
         
         menu = st.radio("Menu", menu_items)
         st.divider()
-        st.progress(0.3, text="Subscription Active")
-        st.caption(f"Renewal: Check with admin")
         if st.button("🚪 Logout", use_container_width=True):
             if auth.get("session_id"):
                 logout_teacher_session(auth["session_id"])
@@ -754,69 +638,68 @@ def show_dashboard(sid, features):
     c1.metric("Students", db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0])
     c2.metric("Teachers", db.execute("SELECT COUNT(*) FROM teachers WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0])
     c3.metric("Classes", db.execute("SELECT COUNT(*) FROM classes WHERE school_id=?", (sid,)).fetchone()[0])
-    c4.metric("Today's Attendance", db.execute("""
-        SELECT COUNT(*) FROM attendance 
-        WHERE date=? AND class_id IN (SELECT id FROM classes WHERE school_id=?)
+    c4.metric("Today", db.execute("""
+        SELECT COUNT(*) FROM attendance WHERE date=? AND class_id IN (SELECT id FROM classes WHERE school_id=?)
     """, (date.today().isoformat(), sid)).fetchone()[0])
 
 # =================== TEACHERS ===================
 def show_teachers(sid, features):
     require_auth(["head"])
     db = get_db_conn()
-    st.header("👨‍🏫 Teacher Management")
+    st.header("👨‍🏫 Teachers")
     
-    max_teachers = features.get("max_teachers", 1)
-    current_teachers = db.execute("SELECT COUNT(*) FROM teachers WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0]
+    max_t = features.get("max_teachers", 1)
+    curr = db.execute("SELECT COUNT(*) FROM teachers WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0]
+    st.caption(f"Limit: {curr}/{max_t}")
     
-    st.caption(f"Plan Limit: {current_teachers}/{max_teachers} teachers")
-    
-    if current_teachers < max_teachers:
+    if curr < max_t:
         with st.expander("➕ Add Teacher"):
             with st.form("add_teacher"):
                 tname = st.text_input("Name *")
                 tphone = st.text_input("Phone *")
                 tpw = st.text_input("Password *", type="password")
-                if st.form_submit_button("✅ Add"):
+                if st.form_submit_button("Add"):
                     if not all([tname, tphone, tpw]):
-                        st.error("Fill all fields")
+                        st.error("Fill all")
                     elif db.execute("SELECT 1 FROM teachers WHERE phone=?", (tphone,)).fetchone():
                         st.error("Phone exists")
                     else:
                         db.execute("INSERT INTO teachers (id, school_id, name, phone, pass) VALUES (?,?,?,?,?)",
                                    (gen_id(), sid, sanitize(tname), sanitize(tphone), hash_pw(tpw)))
                         db.commit()
-                        st.success("✅ Added!")
+                        st.success("Added!")
                         st.rerun()
     else:
-        st.warning("⚠️ Teacher limit reached for your plan. Upgrade to add more.")
+        st.warning("Teacher limit reached. Upgrade plan.")
     
     teachers = db.execute("SELECT * FROM teachers WHERE school_id=? AND is_active=1", (sid,)).fetchall()
     for t in teachers:
         cols = st.columns([3,2,2,1])
         cols[0].write(f"**{t['name']}**")
         cols[1].write(f"📞 {t['phone']}")
-        cols[2].write(f"Role: {t['role']}")
+        cols[2].write(t['role'])
         if cols[3].button("🗑️", key=f"rmt_{t['id']}"):
             db.execute("UPDATE teachers SET is_active=0 WHERE id=?", (t['id'],))
             db.commit()
             st.rerun()
 
-# =================== CLASSES & PROGRAMS ===================
+# =================== CLASSES ===================
 def show_classes_programs(sid):
     db = get_db_conn()
     st.header("🏫 Classes & Programs")
     c1, c2 = st.columns(2)
+    
     with c1:
         st.subheader("📚 Classes")
         with st.form("add_class"):
             cname = st.text_input("Class Name *", placeholder="Nursery...")
-            csec = st.text_input("Section", placeholder="A, B...")
-            if st.form_submit_button("➕ Add Class"):
+            csec = st.text_input("Section", placeholder="A...")
+            if st.form_submit_button("Add"):
                 if cname:
                     db.execute("INSERT INTO classes (id, class_name, section, school_id) VALUES (?,?,?,?)",
                                (gen_id(), sanitize(cname), sanitize(csec), sid))
                     db.commit()
-                    st.success(f"✅ Added {cname}!")
+                    st.success("Added!")
                 else:
                     st.error("Name required")
         
@@ -824,7 +707,7 @@ def show_classes_programs(sid):
         for c in classes:
             sc = db.execute("SELECT COUNT(*) FROM students WHERE class_id=? AND is_active=1", (c['id'],)).fetchone()[0]
             cols = st.columns([3,1,1])
-            cols[0].write(f"**{c['class_name']} {c['section'] or ''}** ({sc} students)")
+            cols[0].write(f"**{c['class_name']} {c['section'] or ''}** ({sc})")
             if cols[2].button("🗑️", key=f"delc_{c['id']}"):
                 if sc == 0:
                     db.execute("DELETE FROM classes WHERE id=?", (c['id'],))
@@ -834,19 +717,19 @@ def show_classes_programs(sid):
                     st.error("Has students!")
     
     with c2:
-        st.subheader("📋 Programs (Auto-Class)")
+        st.subheader("📋 Programs")
         classes = db.execute("SELECT * FROM classes WHERE school_id=? AND is_active=1", (sid,)).fetchall()
         if classes:
-            class_opts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
+            copts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
             with st.form("add_program"):
                 pname = st.text_input("Program Name *")
-                pcls = st.selectbox("Assign to Class *", list(class_opts.keys()))
-                if st.form_submit_button("➕ Add Program"):
+                pc = st.selectbox("Class *", list(copts.keys()))
+                if st.form_submit_button("Add"):
                     if pname:
                         db.execute("INSERT INTO programs (id, program_name, class_id, school_id) VALUES (?,?,?,?)",
-                                   (gen_id(), sanitize(pname), class_opts[pcls], sid))
+                                   (gen_id(), sanitize(pname), copts[pc], sid))
                         db.commit()
-                        st.success("✅ Added!")
+                        st.success("Added!")
                     else:
                         st.error("Name required")
             
@@ -872,8 +755,7 @@ def show_students(sid):
     st.header("👶 Students")
     
     plan, max_students, _ = get_school_plan(sid)
-    current_count = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0]
-    
+    curr = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0]
     programs = db.execute("""
         SELECT p.*, c.class_name, c.section 
         FROM programs p JOIN classes c ON p.class_id=c.id 
@@ -881,36 +763,35 @@ def show_students(sid):
     """, (sid,)).fetchall()
     prog_dict = {f"{p['program_name']} → {p['class_name']} {p['section'] or ''}": p for p in programs}
     
-    st.caption(f"Students: {current_count}/{max_students}")
+    st.caption(f"Students: {curr}/{max_students}")
     
     t1, t2 = st.tabs(["➕ Add", "📋 List"])
     with t1:
-        if current_count >= max_students:
-            st.error(f"❌ Student limit reached ({max_students}). Upgrade plan to add more.")
+        if curr >= max_students:
+            st.error(f"Limit reached ({max_students}). Upgrade plan.")
         elif not programs:
             st.warning("Create programs first")
         else:
             with st.form("add_student", clear_on_submit=True):
                 c1, c2 = st.columns(2)
                 with c1:
-                    name = st.text_input("Name *")
+                    name = st.text_input("Student Name *")
                     mother = st.text_input("Mother's Name")
                     father = st.text_input("Father's Name")
-                    dob = st.date_input("DOB", value=date(2020,1,1))
-                    blood = st.selectbox("Blood", ["A+","A-","B+","B-","AB+","AB-","O+","O-","Unknown"])
+                    dob = st.date_input("Date of Birth", value=date(2020,1,1))
+                    blood = st.selectbox("Blood Group", ["A+","A-","B+","B-","AB+","AB-","O+","O-","Unknown"])
+                    allergy = st.text_input("Allergy / Medical Notes", placeholder="Any allergies or conditions")
                 with c2:
-                    prog = st.selectbox("Program *", list(prog_dict.keys()))
-                    phone = st.text_input("Phone")
-                    email = st.text_input("Email")
-                    guardian = st.text_input("Guardian")
-                    likes = st.text_area("Likes")
+                    prog = st.selectbox("Program Enrolled *", list(prog_dict.keys()))
+                    phone = st.text_input("Phone Number")
+                    email = st.text_input("Email ID")
+                    guardian = st.text_input("Guardian Name")
+                    likes = st.text_area("Likes / Interests")
                     dislikes = st.text_area("Dislikes")
-                
                 photo = st.file_uploader("Profile Photo", type=["jpg","jpeg","png"])
                 if photo:
                     st.image(photo, width=150)
-                
-                if st.form_submit_button("✅ Register"):
+                if st.form_submit_button("Register Student"):
                     if not name or not prog:
                         st.error("Name and Program required")
                     else:
@@ -918,11 +799,12 @@ def show_students(sid):
                         age = calc_age(dob.isoformat())
                         ph = compress_image(photo)
                         db.execute("""
-                            INSERT INTO students (id, name, mother_name, father_name, dob, age, blood_group, program_id, class_id,
-                             phone, email, guardian_name, likes, dislikes, school_id, is_active, profile_photo)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            INSERT INTO students (id, name, mother_name, father_name, dob, age, blood_group,
+                             allergy, program_id, class_id, phone, email, guardian_name, likes, dislikes,
+                             school_id, is_active, profile_photo)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """, (gen_id(), sanitize(name), sanitize(mother), sanitize(father), dob.isoformat(), age, blood,
-                              p['id'], p['class_id'], sanitize(phone), sanitize(email), sanitize(guardian),
+                              sanitize(allergy), p['id'], p['class_id'], sanitize(phone), sanitize(email), sanitize(guardian),
                               sanitize(likes), sanitize(dislikes), sid, 1, ph))
                         db.commit()
                         st.success(f"✅ {name} registered!")
@@ -931,8 +813,11 @@ def show_students(sid):
     with t2:
         students = db.execute("""
             SELECT s.*, p.program_name, c.class_name, c.section
-            FROM students s LEFT JOIN programs p ON s.program_id=p.id LEFT JOIN classes c ON s.class_id=c.id
-            WHERE s.school_id=? AND s.is_active=1 ORDER BY s.name
+            FROM students s
+            LEFT JOIN programs p ON s.program_id=p.id
+            LEFT JOIN classes c ON s.class_id=c.id
+            WHERE s.school_id=? AND s.is_active=1
+            ORDER BY s.name
         """, (sid,)).fetchall()
         for s in students:
             with st.expander(f"👤 {s['name']} | {s['program_name'] or '-'} | Age: {s['age'] or '?'} | {s['blood_group'] or '-'} "):
@@ -947,11 +832,12 @@ def show_students(sid):
                         st.write("📷 No photo")
                 with c2:
                     st.write(f"**Mother:** {s['mother_name'] or '-'} | **Father:** {s['father_name'] or '-'}")
-                    st.write(f"**DOB:** {s['dob'] or '-'} | **Phone:** {s['phone'] or '-'} | **Email:** {s['email'] or '-'}")
-                    st.write(f"**Guardian:** {s['guardian_name'] or '-'}")
-                    st.write(f"**Class:** {s['class_name'] or '-'} {s['section'] or ''}")
+                    st.write(f"**DOB:** {s['dob'] or '-'} | **Blood:** {s['blood_group'] or '-'}")
+                    st.write(f"**Allergy:** {s['allergy'] or 'None'}")
+                    st.write(f"**Phone:** {s['phone'] or '-'} | **Email:** {s['email'] or '-'}")
+                    st.write(f"**Guardian:** {s['guardian_name'] or '-'} | **Class:** {s['class_name'] or '-'} {s['section'] or ''}")
                     st.write(f"**Likes:** {s['likes'] or '-'} | **Dislikes:** {s['dislikes'] or '-'}")
-                    if st.button("🗑️ Remove", key=f"rms_{s['id']}"):
+                    if st.button("Remove", key=f"rms_{s['id']}"):
                         db.execute("UPDATE students SET is_active=0 WHERE id=?", (s['id'],))
                         db.commit()
                         st.rerun()
@@ -959,25 +845,28 @@ def show_students(sid):
 # =================== ATTENDANCE ===================
 def show_attendance(sid):
     db = get_db_conn()
-    st.header("📋 Attendance (In/Out Time)")
+    st.header("📋 Attendance")
     classes = db.execute("SELECT * FROM classes WHERE school_id=? AND is_active=1", (sid,)).fetchall()
     if not classes:
         st.warning("Create classes first")
         return
-    class_opts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
+    copts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
     
-    t1, t2 = st.tabs(["📝 Mark", "📅 View"])
+    t1, t2 = st.tabs(["Mark", "View"])
     with t1:
-        cls = st.selectbox("Class", list(class_opts.keys()), key="acls")
+        cls = st.selectbox("Class", list(copts.keys()), key="acls")
         dt = st.date_input("Date", value=date.today(), key="adt")
-        students = db.execute("SELECT id, name FROM students WHERE class_id=? AND school_id=? AND is_active=1 ORDER BY name",
-                              (class_opts[cls], sid)).fetchall()
+        students = db.execute("""
+            SELECT id, name FROM students WHERE class_id=? AND school_id=? AND is_active=1 ORDER BY name
+        """, (copts[cls], sid)).fetchall()
         if not students:
             st.info("No students")
             return
         
-        existing = {r['student_id']: r for r in db.execute("SELECT * FROM attendance WHERE date=? AND class_id=?",
-                                                            (dt.isoformat(), class_opts[cls])).fetchall()}
+        existing = {r['student_id']: r for r in db.execute("""
+            SELECT * FROM attendance WHERE date=? AND class_id=?
+        """, (dt.isoformat(), copts[cls])).fetchall()}
+        
         with st.form("mark_att"):
             records = []
             for s in students:
@@ -1017,24 +906,25 @@ def show_attendance(sid):
                 records.append((s['id'], status, in_t, out_t, note))
                 st.divider()
             
-            if st.form_submit_button("💾 Save Attendance", use_container_width=True):
-                db.execute("DELETE FROM attendance WHERE date=? AND class_id=?", (dt.isoformat(), class_opts[cls]))
+            if st.form_submit_button("Save Attendance", use_container_width=True):
+                db.execute("DELETE FROM attendance WHERE date=? AND class_id=?", (dt.isoformat(), copts[cls]))
                 for rid, stt, it, ot, nt in records:
                     db.execute("""
                         INSERT INTO attendance (student_id, class_id, date, status, in_time, out_time, notes, marked_by)
                         VALUES (?,?,?,?,?,?,?,?)
-                    """, (rid, class_opts[cls], dt.isoformat(), stt, str(it) if it else None, str(ot) if ot else None, nt, sid))
+                    """, (rid, copts[cls], dt.isoformat(), stt, str(it) if it else None, str(ot) if ot else None, nt, sid))
                 db.commit()
-                st.success(f"✅ Saved {len(records)} records!")
+                st.success(f"Saved {len(records)} records!")
                 st.balloons()
     
     with t2:
-        vdt = st.date_input("Select Date", value=date.today(), key="vdt")
-        vcls = st.selectbox("Class", list(class_opts.keys()), key="vcls")
+        vdt = st.date_input("Date", value=date.today(), key="vdt")
+        vcls = st.selectbox("Class", list(copts.keys()), key="vcls")
         recs = db.execute("""
-            SELECT a.*, s.name FROM attendance a JOIN students s ON a.student_id=s.id
+            SELECT a.*, s.name FROM attendance a
+            JOIN students s ON a.student_id=s.id
             WHERE a.date=? AND a.class_id=? ORDER BY s.name
-        """, (vdt.isoformat(), class_opts[vcls])).fetchall()
+        """, (vdt.isoformat(), copts[vcls])).fetchall()
         if recs:
             for r in recs:
                 em = {"Present":"✅","Absent":"❌","Late":"⏰","Half Day":"⚠️"}.get(r['status'],"⬜")
@@ -1054,18 +944,18 @@ def show_attendance(sid):
 # =================== REPORTS ===================
 def show_reports(sid):
     db = get_db_conn()
-    st.header("📊 Attendance Reports")
+    st.header("📊 Reports")
     classes = db.execute("SELECT * FROM classes WHERE school_id=? AND is_active=1", (sid,)).fetchall()
     if not classes:
         st.warning("No classes")
         return
-    class_opts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
+    copts = {f"{c['class_name']} {c['section'] or ''}".strip(): c['id'] for c in classes}
     
-    t1, t2 = st.tabs(["📅 Monthly", "📆 Yearly"])
+    t1, t2 = st.tabs(["Monthly", "Yearly"])
     with t1:
         c1,c2,c3 = st.columns([2,2,2])
         with c1:
-            rcls = st.selectbox("Class", list(class_opts.keys()), key="rcls")
+            rcls = st.selectbox("Class", list(copts.keys()), key="rcls")
         with c2:
             rmon = st.selectbox("Month", list(calendar.month_name)[1:], key="rmon")
         with c3:
@@ -1075,11 +965,10 @@ def show_reports(sid):
         sd = f"{ryr}-{mn:02d}-01"
         ld = calendar.monthrange(ryr, mn)[1]
         ed = f"{ryr}-{mn:02d}-{ld}"
-        
         wd = db.execute("SELECT COUNT(DISTINCT date) FROM attendance WHERE class_id=? AND date BETWEEN ? AND ?",
-                        (class_opts[rcls], sd, ed)).fetchone()[0]
+                        (copts[rcls], sd, ed)).fetchone()[0]
         stu = db.execute("SELECT id, name FROM students WHERE class_id=? AND school_id=? AND is_active=1 ORDER BY name",
-                         (class_opts[rcls], sid)).fetchall()
+                         (copts[rcls], sid)).fetchall()
         st.subheader(f"{rcls} — {rmon} {ryr}")
         st.caption(f"Working Days: {wd}")
         
@@ -1099,22 +988,20 @@ def show_reports(sid):
                     "Half Day": stt['half'] or 0, "Total Marked": stt['total'] or 0
                 })
             st.dataframe(data, use_container_width=True, hide_index=True)
-        else:
-            st.info("No students")
     
     with t2:
         c1,c2 = st.columns([2,2])
         with c1:
-            ycls = st.selectbox("Class", list(class_opts.keys()), key="ycls")
+            ycls = st.selectbox("Class", list(copts.keys()), key="ycls")
         with c2:
             yyr = st.selectbox("Year", list(range(datetime.now().year, datetime.now().year-5, -1)), key="yyr")
         
         ys = f"{yyr}-01-01"
         ye = f"{yyr}-12-31"
         ywd = db.execute("SELECT COUNT(DISTINCT date) FROM attendance WHERE class_id=? AND date BETWEEN ? AND ?",
-                         (class_opts[ycls], ys, ye)).fetchone()[0]
+                         (copts[ycls], ys, ye)).fetchone()[0]
         ystu = db.execute("SELECT id, name FROM students WHERE class_id=? AND school_id=? AND is_active=1 ORDER BY name",
-                          (class_opts[ycls], sid)).fetchall()
+                          (copts[ycls], sid)).fetchall()
         st.subheader(f"{ycls} — Year {yyr}")
         st.caption(f"Working Days: {ywd}")
         
@@ -1134,8 +1021,6 @@ def show_reports(sid):
                     "Half Day": stt['half'] or 0, "Total Marked": stt['total'] or 0
                 })
             st.dataframe(ydata, use_container_width=True, hide_index=True)
-        else:
-            st.info("No students")
 
 # =================== CARE LOGS ===================
 def show_care_logs(sid):
@@ -1147,7 +1032,7 @@ def show_care_logs(sid):
         return
     sd = {s['name']: s['id'] for s in stu}
     
-    t1, t2 = st.tabs(["➕ New Log", "📋 Today"])
+    t1, t2 = st.tabs(["New Log", "Today"])
     with t1:
         ss = st.selectbox("Student", list(sd.keys()))
         lt = st.selectbox("Type", ["Breakfast","Lunch","Diaper Change","Pee","Potty","Naptime","Daycare","Activity"])
@@ -1156,7 +1041,7 @@ def show_care_logs(sid):
             with st.form(f"log_{lt}"):
                 portion = st.selectbox("Portion", ["Full","Half","Little","Refused"])
                 notes = st.text_area("Notes")
-                if st.form_submit_button("💾 Save"):
+                if st.form_submit_button("Save"):
                     db.execute("""INSERT INTO care_logs (id, student_id, student_name, activity, notes, school_id, type, sub_type, status)
                         VALUES (?,?,?,?,?,?,?,?,?)""",
                         (gen_id(), sd[ss], ss, lt, notes, sid, "food", lt.lower(), portion))
@@ -1165,7 +1050,7 @@ def show_care_logs(sid):
         elif lt in ["Diaper Change","Pee","Potty"]:
             with st.form(f"log_{lt}"):
                 notes = st.text_area("Notes")
-                if st.form_submit_button("💾 Save"):
+                if st.form_submit_button("Save"):
                     db.execute("""INSERT INTO care_logs (id, student_id, student_name, activity, notes, school_id, type, sub_type)
                         VALUES (?,?,?,?,?,?,?,?)""",
                         (gen_id(), sd[ss], ss, lt, notes, sid, "bathroom", lt.lower().replace(" ","_")))
@@ -1176,7 +1061,7 @@ def show_care_logs(sid):
                 start = st.time_input("Start")
                 end = st.time_input("End")
                 notes = st.text_area("Notes")
-                if st.form_submit_button("💾 Save"):
+                if st.form_submit_button("Save"):
                     db.execute("""INSERT INTO care_logs (id, student_id, student_name, activity, notes, school_id, type, start_time, end_time)
                         VALUES (?,?,?,?,?,?,?,?,?)""",
                         (gen_id(), sd[ss], ss, lt, notes, sid, "nap", str(start), str(end)))
@@ -1185,7 +1070,7 @@ def show_care_logs(sid):
         else:
             with st.form(f"log_{lt}"):
                 notes = st.text_area("Details")
-                if st.form_submit_button("💾 Save"):
+                if st.form_submit_button("Save"):
                     db.execute("""INSERT INTO care_logs (id, student_id, student_name, activity, notes, school_id, type)
                         VALUES (?,?,?,?,?,?,?)""",
                         (gen_id(), sd[ss], ss, lt, notes, sid, lt.lower()))
@@ -1204,13 +1089,12 @@ def show_care_logs(sid):
                 if l['notes']:
                     st.caption(f"Note: {l['notes']}")
 
-# =================== PHOTO GALLERY (PREMIUM) ===================
+# =================== PHOTO GALLERY ===================
 def show_photo_gallery(sid):
     st.header("🖼️ Photo Gallery")
-    st.info("Premium Feature: Batch upload with student tagging coming in Phase 3.")
-    st.image("https://via.placeholder.com/800x400?text=Photo+Gallery+-+Premium+Only", use_column_width=True)
+    st.info("Premium Feature: Batch upload with tagging coming in Phase 3.")
 
-# =================== MAIN ROUTER ===================
+# =================== MAIN ===================
 def school_page():
     require_auth(["head", "teacher"])
     sid = st.session_state.auth["school_id"]
@@ -1242,7 +1126,7 @@ def main():
         school_page()
     
     st.divider()
-    st.caption("SchoolOS Pro SaaS | Self-Service Plans | Revenue Control")
+    st.caption("SchoolOS Pro SaaS | Phase 2 Complete")
 
 if __name__ == "__main__":
     main()
