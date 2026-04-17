@@ -23,6 +23,9 @@ st.markdown("""
     .feature-yes { color: #2e7d32; font-weight: bold; }
     .feature-no { color: #c62828; text-decoration: line-through; opacity: 0.6; }
     .school-id-box { background: #e3f2fd; border-left: 4px solid #1f77b4; padding: 10px; border-radius: 6px; margin: 10px 0; font-family: monospace; font-size: 1.1rem; }
+    .trial-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; margin: 10px 0; text-align: center; }
+    .trial-expired { background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%); }
+    .upgrade-banner { background: #fff3e0; border: 2px solid #ff9800; padding: 15px; border-radius: 10px; margin: 10px 0; text-align: center; }
     @media (max-width: 768px) { .main-header { font-size: 1.6rem; } }
 </style>
 """, unsafe_allow_html=True)
@@ -43,8 +46,10 @@ def get_db():
         );
         CREATE TABLE IF NOT EXISTS schools (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, pass TEXT NOT NULL,
-            email TEXT, phone TEXT, plan_id TEXT, max_students INTEGER DEFAULT 30,
-            expiry TEXT, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            email TEXT, phone TEXT, plan_id TEXT, max_students INTEGER DEFAULT 10,
+            expiry TEXT, is_active INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            trial_start TEXT, trial_end TEXT, is_trial INTEGER DEFAULT 1,
+            is_upgraded INTEGER DEFAULT 0, hard_limit_hit INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS subscriptions (
             id TEXT PRIMARY KEY, school_id TEXT, plan_id TEXT,
@@ -137,6 +142,10 @@ def check_pw(pw, hashed):
 def gen_id():
     return secrets.token_urlsafe(12)
 
+def gen_school_id():
+    """Generate unique 8-character school ID"""
+    return secrets.token_urlsafe(6)[:8].upper()
+
 def compress_image(uploaded_file, max_size=(600, 600), quality=60):
     if uploaded_file is None:
         return None
@@ -204,11 +213,85 @@ def get_plan_features(plan_id):
 
 def get_school_plan(school_id):
     db = get_db_conn()
-    s = db.execute("SELECT plan_id, max_students FROM schools WHERE id=?", (school_id,)).fetchone()
+    s = db.execute("SELECT * FROM schools WHERE id=?", (school_id,)).fetchone()
     if not s:
-        return None, 0, {}
-    p = db.execute("SELECT * FROM plans WHERE id=?", (s["plan_id"],)).fetchone()
-    return (p, s["max_students"], json.loads(p["features"] or '{}')) if p else (None, 0, {})
+        return None, 0, {}, True  # expired default
+    
+    # Check trial status
+    is_expired = False
+    is_hard_limited = s["hard_limit_hit"] == 1
+    
+    if s["is_trial"] == 1 and s["trial_end"]:
+        try:
+            trial_end = datetime.strptime(s["trial_end"], "%Y-%m-%d")
+            if datetime.now() > trial_end:
+                is_expired = True
+        except:
+            pass
+    
+    # If upgraded, use plan features
+    if s["is_upgraded"] == 1 and s["plan_id"]:
+        p = db.execute("SELECT * FROM plans WHERE id=?", (s["plan_id"],)).fetchone()
+        if p:
+            features = json.loads(p["features"] or '{}')
+            # Force disable photos if not explicitly in paid plan
+            if s["plan_id"] == "plan_basic":
+                features["photos"] = False
+            return p, s["max_students"], features, is_expired
+    
+    # Trial mode - limited features
+    trial_features = {
+        "students": True,
+        "attendance": True,
+        "care_logs": True,
+        "reports": False,
+        "photos": False,  # Locked during trial
+        "whatsapp": False,
+        "multi_teacher": False,
+        "max_teachers": 1,
+        "broadcast": True
+    }
+    
+    # Post-trial expired with 8/10 rule
+    if is_expired and not is_hard_limited:
+        # Count active students
+        active_count = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (school_id,)).fetchone()[0]
+        if active_count >= 8:
+            is_hard_limited = True
+    
+    return None, s["max_students"], trial_features, is_expired or is_hard_limited
+
+def check_trial_limits(school_id):
+    """Check if school has hit trial limits (11 students or 14 days)"""
+    db = get_db_conn()
+    s = db.execute("SELECT * FROM schools WHERE id=?", (school_id,)).fetchone()
+    if not s or s["is_upgraded"] == 1:
+        return {"can_add": True, "reason": None, "students": 0, "max": 9999}
+    
+    student_count = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (school_id,)).fetchone()[0]
+    max_students = s["max_students"]
+    
+    # Check hard limit (11 students during trial)
+    if student_count >= 11 and s["is_trial"] == 1:
+        db.execute("UPDATE schools SET hard_limit_hit=1 WHERE id=?", (school_id,))
+        db.commit()
+        return {"can_add": False, "reason": "trial_student_limit", "students": student_count, "max": 11}
+    
+    # Check trial expiration
+    if s["trial_end"]:
+        try:
+            trial_end = datetime.strptime(s["trial_end"], "%Y-%m-%d")
+            if datetime.now() > trial_end:
+                # Post-trial: 8/10 rule
+                if student_count >= 8:
+                    db.execute("UPDATE schools SET hard_limit_hit=1 WHERE id=?", (school_id,))
+                    db.commit()
+                    return {"can_add": False, "reason": "post_trial_limit", "students": student_count, "max": 10}
+                max_students = 10  # Allow up to 10 post-trial but lock at 8
+        except:
+            pass
+    
+    return {"can_add": student_count < max_students, "reason": None, "students": student_count, "max": max_students}
 
 # =================== SESSION ===================
 if "auth" not in st.session_state:
@@ -218,10 +301,10 @@ if "auth" not in st.session_state:
     }
 if "show_teacher_reg" not in st.session_state:
     st.session_state.show_teacher_reg = False
-if "show_school_reg" not in st.session_state:
-    st.session_state.show_school_reg = False
 if "payment_success" not in st.session_state:
     st.session_state.payment_success = None
+if "reg_success" not in st.session_state:
+    st.session_state.reg_success = None
 
 def require_auth(allowed_roles):
     if not st.session_state.auth["logged_in"]:
@@ -268,7 +351,7 @@ def landing_page():
                         st.error("Invalid credentials")
             
             elif role == "School Head":
-                school_id = st.text_input("School ID")
+                school_id = st.text_input("School ID", placeholder="e.g., ABC12345")
                 pw = st.text_input("Password", type="password")
                 if st.button("Login", type="primary", use_container_width=True):
                     db = get_db_conn()
@@ -278,12 +361,8 @@ def landing_page():
                     elif not check_pw(pw, s["pass"]):
                         st.error("Invalid password")
                     else:
-                        try:
-                            if datetime.now() > datetime.strptime(s["expiry"], "%Y-%m-%d"):
-                                st.error("Subscription expired.")
-                                return
-                        except:
-                            pass
+                        # Check if trial expired and needs upgrade
+                        limits = check_trial_limits(school_id)
                         st.session_state.auth = {
                             "logged_in": True, "role": "head", "school_id": school_id,
                             "user_id": school_id, "name": s["name"], "session_id": None
@@ -291,8 +370,8 @@ def landing_page():
                         st.rerun()
             
             elif role == "Teacher":
-                school_id = st.text_input("School ID", key="t_school")
-                phone = st.text_input("Phone", key="t_phone")
+                school_id = st.text_input("School ID", key="t_school", placeholder="e.g., ABC12345")
+                phone = st.text_input("Your Phone", key="t_phone")
                 pw = st.text_input("Password", type="password", key="t_pw")
                 c1, c2 = st.columns(2)
                 with c1:
@@ -320,9 +399,9 @@ def landing_page():
                 if st.session_state.show_teacher_reg:
                     st.divider()
                     with st.form("teacher_reg"):
-                        reg_school = st.text_input("School ID (from invite)")
+                        reg_school = st.text_input("School ID")
                         reg_name = st.text_input("Full Name")
-                        reg_phone = st.text_input("Phone")
+                        reg_phone = st.text_input("Your Phone")
                         reg_pw = st.text_input("Password", type="password")
                         reg_pw2 = st.text_input("Confirm Password", type="password")
                         if st.form_submit_button("Register"):
@@ -354,11 +433,114 @@ def landing_page():
 
 # =================== SCHOOL REGISTRATION ===================
 def school_registration_flow():
+    st.subheader("🎉 Start Your 14-Day Free Trial")
+    st.markdown("""
+    <div style="background: #e8f5e9; padding: 15px; border-radius: 10px; margin: 15px 0;">
+        <h4>✨ Trial Includes:</h4>
+        <ul>
+            <li>Up to <strong>10 students</strong> completely FREE</li>
+            <li><strong>14 days</strong> full access to core features</li>
+            <li>Attendance, Care Logs, Classes & Programs</li>
+            <li>Basic reporting</li>
+        </ul>
+        <p><small>📸 Photo Gallery unlocks after upgrade | 🚫 Hard limit at 11 students during trial</small></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.form("trial_reg"):
+        c1, c2 = st.columns(2)
+        with c1:
+            s_name = st.text_input("School Name *", placeholder="Little Angels Preschool")
+            s_email = st.text_input("Email *", placeholder="school@email.com")
+        with c2:
+            s_phone = st.text_input("Phone Number *", placeholder="9876543210")
+            s_pass = st.text_input("Create Password *", type="password")
+            s_pass2 = st.text_input("Confirm Password *", type="password")
+        
+        st.info("""
+        **Trial Terms:**
+        - 14 days from registration date
+        - Maximum 10 students (11th student triggers upgrade requirement)
+        - After trial: Can keep 8 students active, need upgrade for more
+        - Photo Gallery available only in paid plans
+        """)
+        
+        if st.form_submit_button("🚀 Start Free Trial", use_container_width=True):
+            if not all([s_name, s_email, s_phone, s_pass]):
+                st.error("Fill all required fields")
+            elif s_pass != s_pass2:
+                st.error("Passwords don't match")
+            elif len(s_pass) < 6:
+                st.error("Password too short")
+            elif not s_phone.isdigit() or len(s_phone) < 10:
+                st.error("Enter valid phone number")
+            else:
+                db = get_db_conn()
+                
+                # Generate unique school ID
+                school_id = gen_school_id()
+                while db.execute("SELECT 1 FROM schools WHERE id=?", (school_id,)).fetchone():
+                    school_id = gen_school_id()
+                
+                trial_start = datetime.now()
+                trial_end = trial_start + timedelta(days=14)
+                
+                db.execute("""
+                    INSERT INTO schools (id, name, pass, email, phone, plan_id, max_students, 
+                                       trial_start, trial_end, is_trial, is_active, is_upgraded)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (school_id, sanitize(s_name), hash_pw(s_pass), sanitize(s_email), 
+                      sanitize(s_phone), None, 10,
+                      trial_start.isoformat(), trial_end.strftime("%Y-%m-%d"), 1, 1, 0))
+                db.commit()
+                
+                st.session_state.reg_success = {
+                    "school_id": school_id,
+                    "name": s_name,
+                    "trial_end": trial_end.strftime("%Y-%m-%d"),
+                    "phone": s_phone
+                }
+                st.rerun()
+    
+    if st.session_state.reg_success:
+        s = st.session_state.reg_success
+        st.balloons()
+        st.success(f"""
+        🎉 Trial Started Successfully!
+        
+        **School Name:** {s['name']}
+        **Your School ID:** `{s['school_id']}`
+        **Trial Ends:** {s['trial_end']}
+        **Phone:** {s['phone']}
+        
+        **Important:** 
+        - Save your School ID: `{s['school_id']}`
+        - You can add up to 10 students
+        - 11th student will require upgrade
+        - Photo Gallery unlocks after upgrade
+        
+        Login with School ID and your password to get started!
+        """)
+        if st.button("Go to Login"):
+            del st.session_state.reg_success
+            st.rerun()
+
+# =================== UPGRADE FLOW ===================
+def show_upgrade_prompt(sid, reason="trial_expired"):
     db = get_db_conn()
     plans = db.execute("SELECT * FROM plans WHERE is_active=1 ORDER BY sort_order").fetchall()
     
-    st.subheader("Choose Your Plan")
+    st.markdown(f"""
+    <div class="{'trial-expired' if reason == 'trial_expired' else 'upgrade-banner'}">
+        <h3>⚡ Upgrade Required</h3>
+        <p>{'Your 14-day trial has ended.' if reason == 'trial_expired' else 'You have reached the maximum limit.'}</p>
+        <p>{'To continue using SchoolOS Pro with all features, please choose a plan below.' if reason == 'trial_expired' else 'Please upgrade to add more students and unlock all features.'}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.subheader("Choose a Plan")
     cols = st.columns(len(plans))
+    
     for idx, p in enumerate(plans):
         features = json.loads(p["features"] or '{}')
         with cols[idx]:
@@ -378,92 +560,36 @@ def school_registration_flow():
                     st.markdown(f"<span class='feature-yes'>✅ {label}</span>", unsafe_allow_html=True)
                 else:
                     st.markdown(f"<span class='feature-no'>❌ {label}</span>", unsafe_allow_html=True)
-            if st.button(f"Select {p['name']}", key=f"sel_plan_{p['id']}", use_container_width=True):
-                st.session_state.selected_plan_id = p["id"]
+            
+            if st.button(f"Upgrade to {p['name']}", key=f"upgrade_{p['id']}", use_container_width=True):
+                process_upgrade(sid, p)
             st.markdown('</div>', unsafe_allow_html=True)
+
+def process_upgrade(school_id, plan):
+    db = get_db_conn()
+    expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
     
-    if "selected_plan_id" in st.session_state:
-        selected_plan_id = st.session_state.selected_plan_id
-        plan = db.execute("SELECT * FROM plans WHERE id=?", (selected_plan_id,)).fetchone()
-        if plan:
-            st.divider()
-            st.subheader(f"Register for {plan['name']}")
-            with st.form("school_reg"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    s_name = st.text_input("School Name *", placeholder="Little Angels")
-                    s_email = st.text_input("Email *", placeholder="school@email.com")
-                with c2:
-                    s_phone = st.text_input("Phone *", placeholder="9876543210")
-                    s_pass = st.text_input("Password *", type="password")
-                    s_pass2 = st.text_input("Confirm Password *", type="password")
-                
-                st.info(f"""
-                **Summary:**
-                - Plan: {plan['name']}
-                - Students: Up to {plan['max_students']}
-                - Amount: ₹{plan['yearly_price']:,}/year
-                """)
-                
-                pay_method = st.radio("Payment", ["Razorpay (Auto)", "Bank Transfer (Manual)"], horizontal=True)
-                
-                if st.form_submit_button("Complete Registration & Pay", use_container_width=True):
-                    if not all([s_name, s_email, s_phone, s_pass]):
-                        st.error("Fill all required fields")
-                    elif s_pass != s_pass2:
-                        st.error("Passwords don't match")
-                    elif len(s_pass) < 6:
-                        st.error("Password too short")
-                    else:
-                        school_id = sanitize(s_name).lower().replace(" ", "_") + "_" + secrets.token_hex(3)
-                        expiry = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-                        
-                        db.execute("""
-                            INSERT INTO schools (id, name, pass, email, phone, plan_id, max_students, expiry, is_active)
-                            VALUES (?,?,?,?,?,?,?,?,0)
-                        """, (school_id, sanitize(s_name), hash_pw(s_pass), sanitize(s_email), sanitize(s_phone),
-                              plan['id'], plan['max_students'], expiry))
-                        
-                        sub_id = gen_id()
-                        db.execute("""
-                            INSERT INTO subscriptions (id, school_id, plan_id, amount_paid, payment_status, start_date, end_date)
-                            VALUES (?,?,?,?,?,?,?)
-                        """, (sub_id, school_id, plan['id'], plan['yearly_price'],
-                              'Paid' if pay_method == "Razorpay (Auto)" else 'Pending',
-                              datetime.now().isoformat(), expiry))
-                        db.commit()
-                        
-                        if pay_method == "Razorpay (Auto)":
-                            db.execute("UPDATE schools SET is_active=1 WHERE id=?", (school_id,))
-                            db.execute("UPDATE subscriptions SET payment_status='Paid', payment_id=? WHERE id=?",
-                                       ("pay_demo_" + secrets.token_hex(4), sub_id))
-                            db.commit()
-                            st.session_state.payment_success = {
-                                "school_id": school_id, "name": s_name,
-                                "plan": plan['name'], "amount": plan['yearly_price']
-                            }
-                        else:
-                            st.warning("Pending manual verification. Admin will activate after payment confirmation.")
-                        st.rerun()
+    # Update school to upgraded status
+    db.execute("""
+        UPDATE schools SET 
+            plan_id=?, max_students=?, is_trial=0, is_upgraded=1, 
+            hard_limit_hit=0, expiry=?
+        WHERE id=?
+    """, (plan['id'], plan['max_students'], expiry, school_id))
     
-    if st.session_state.payment_success:
-        s = st.session_state.payment_success
-        st.balloons()
-        st.success(f"""
-        🎉 Registration Successful!
-        
-        **School:** {s['name']}
-        **ID:** `{s['school_id']}`
-        **Plan:** {s['plan']}
-        **Paid:** ₹{s['amount']:,}
-        
-        Log in with your School ID and Password.
-        """)
-        if st.button("Go to Login"):
-            del st.session_state.payment_success
-            if "selected_plan_id" in st.session_state:
-                del st.session_state.selected_plan_id
-            st.rerun()
+    # Create subscription record
+    sub_id = gen_id()
+    db.execute("""
+        INSERT INTO subscriptions (id, school_id, plan_id, amount_paid, payment_status, start_date, end_date)
+        VALUES (?,?,?,?,?,?,?)
+    """, (sub_id, school_id, plan['id'], plan['yearly_price'], 'Paid',
+          datetime.now().isoformat(), expiry))
+    
+    db.commit()
+    
+    st.success(f"🎉 Upgraded to {plan['name']}! You now have access to {plan['max_students']} students and all features including Photo Gallery.")
+    st.balloons()
+    st.rerun()
 
 # =================== ADMIN ===================
 def admin_page():
@@ -482,12 +608,16 @@ def admin_page():
         st.divider()
         ts = db.execute("SELECT COUNT(*) FROM schools").fetchone()[0]
         active = db.execute("SELECT COUNT(*) FROM schools WHERE is_active=1").fetchone()[0]
+        trial = db.execute("SELECT COUNT(*) FROM schools WHERE is_trial=1").fetchone()[0]
+        upgraded = db.execute("SELECT COUNT(*) FROM schools WHERE is_upgraded=1").fetchone()[0]
         rev = db.execute("SELECT COALESCE(SUM(amount_paid),0) FROM subscriptions WHERE payment_status='Paid'").fetchone()[0]
-        st.metric("Schools", ts)
+        st.metric("Total Schools", ts)
         st.metric("Active", active)
+        st.metric("In Trial", trial)
+        st.metric("Upgraded", upgraded)
         st.metric("Revenue", f"₹{rev:,}")
     
-    t1, t2, t3 = st.tabs(["💰 Revenue", "📋 Plans", "⚙️ Settings"])
+    t1, t2, t3 = st.tabs(["💰 Revenue & Schools", "📋 Plans", "⚙️ Settings"])
     
     with t1:
         st.header("Revenue Dashboard")
@@ -498,9 +628,31 @@ def admin_page():
         c4.metric("Pending", db.execute("SELECT COUNT(*) FROM subscriptions WHERE payment_status='Pending'").fetchone()[0])
         
         st.divider()
-        st.subheader("All Subscriptions")
+        st.subheader("All Schools")
+        schools = db.execute("""
+            SELECT s.*, p.name as plan_name 
+            FROM schools s 
+            LEFT JOIN plans p ON s.plan_id = p.id
+            ORDER BY s.created_at DESC
+        """).fetchall()
+        
+        if schools:
+            data = []
+            for s in schools:
+                status = "🟢 Active" if s['is_upgraded'] else ("🟡 Trial" if s['is_trial'] else "🔴 Expired")
+                data.append({
+                    "School": s['name'], "ID": s['id'], "Phone": s['phone'], "Email": s['email'],
+                    "Status": status, "Plan": s['plan_name'] or "Trial",
+                    "Students": s['max_students'], "Trial Ends": s['trial_end'] or "-",
+                    "Created": s['created_at'][:10] if s['created_at'] else "-"
+                })
+            st.dataframe(data, use_container_width=True, hide_index=True)
+        else:
+            st.info("No schools yet")
+        
+        st.subheader("Subscriptions")
         subs = db.execute("""
-            SELECT s.name, s.email, s.phone, s.is_active, s.created_at,
+            SELECT s.id as school_id, s.name, s.email, s.is_active, s.created_at,
                    p.name as plan_name, p.yearly_price,
                    sub.amount_paid, sub.payment_status, sub.payment_id, sub.start_date, sub.end_date
             FROM subscriptions sub
@@ -513,16 +665,13 @@ def admin_page():
             data = []
             for sub in subs:
                 data.append({
-                    "School": sub['name'], "Email": sub['email'], "Phone": sub['phone'],
+                    "School": sub['name'], "School ID": sub['school_id'], "Email": sub['email'],
                     "Plan": sub['plan_name'], "Amount": f"₹{sub['amount_paid']:,}",
                     "Status": sub['payment_status'], "Payment ID": sub['payment_id'] or "-",
                     "Start": sub['start_date'][:10] if sub['start_date'] else "-",
-                    "End": sub['end_date'][:10] if sub['end_date'] else "-",
-                    "Active": "✅" if sub['is_active'] else "⏳"
+                    "End": sub['end_date'][:10] if sub['end_date'] else "-"
                 })
             st.dataframe(data, use_container_width=True, hide_index=True)
-        else:
-            st.info("No subscriptions yet")
     
     with t2:
         st.header("Plan Configuration")
@@ -593,16 +742,42 @@ def admin_page():
 def school_sidebar():
     auth = st.session_state.auth
     sid = auth["school_id"]
-    plan, max_students, features = get_school_plan(sid)
+    plan, max_students, features, is_expired = get_school_plan(sid)
     
     with st.sidebar:
         st.markdown(f"### {auth['name']}")
         st.caption(f"Role: {auth['role'].upper()}")
-        if plan:
-            st.caption(f"Plan: {plan['name']}")
+        
+        # Show trial/upgrade status
+        db = get_db_conn()
+        s = db.execute("SELECT * FROM schools WHERE id=?", (sid,)).fetchone()
+        
+        if s["is_trial"] == 1 and not s["is_upgraded"]:
+            try:
+                trial_end = datetime.strptime(s["trial_end"], "%Y-%m-%d")
+                days_left = (trial_end - datetime.now()).days
+                if days_left > 0:
+                    st.markdown(f"""
+                    <div class="trial-box">
+                        <strong>🎁 Free Trial</strong><br>
+                        {days_left} days remaining<br>
+                        Max 10 students (11th requires upgrade)
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div class="trial-box trial-expired">
+                        <strong>⏰ Trial Expired</strong><br>
+                        Upgrade to continue
+                    </div>
+                    """, unsafe_allow_html=True)
+            except:
+                pass
+        elif s["is_upgraded"] == 1:
+            st.caption(f"Plan: {plan['name'] if plan else 'Basic'}")
+        
         st.divider()
         
-        # SHOW SCHOOL ID PROMINENTLY
         st.markdown("**Your School ID**")
         st.markdown(f"<div class='school-id-box'>{sid}</div>", unsafe_allow_html=True)
         st.caption("Share this ID with teachers to register")
@@ -615,8 +790,10 @@ def school_sidebar():
         if features.get("reports"):
             menu_items.append("📊 Reports")
         menu_items.append("🧸 Care Logs")
-        if features.get("photos"):
+        if features.get("photos") and s["is_upgraded"] == 1:
             menu_items.append("🖼️ Photo Gallery")
+        elif s["is_upgraded"] == 0:
+            menu_items.append("🔒 Photo Gallery (Upgrade)")
         
         menu = st.radio("Menu", menu_items)
         st.divider()
@@ -628,12 +805,31 @@ def school_sidebar():
                 "user_id": None, "name": None, "session_id": None
             }
             st.rerun()
-    return menu, features
+    return menu, features, is_expired
 
 # =================== DASHBOARD ===================
-def show_dashboard(sid, features):
+def show_dashboard(sid, features, is_expired):
     db = get_db_conn()
     st.header("📊 Dashboard")
+    
+    # Check limits and show warnings
+    limits = check_trial_limits(sid)
+    s = db.execute("SELECT * FROM schools WHERE id=?", (sid,)).fetchone()
+    
+    # Show upgrade prompt if expired or limited
+    if is_expired or not limits["can_add"]:
+        if s["is_trial"] == 1 and limits.get("reason") == "trial_student_limit":
+            show_upgrade_prompt(sid, "student_limit")
+        elif s["is_trial"] == 1 and datetime.now() > datetime.strptime(s["trial_end"], "%Y-%m-%d"):
+            show_upgrade_prompt(sid, "trial_expired")
+        elif limits.get("reason") == "post_trial_limit":
+            show_upgrade_prompt(sid, "post_trial_limit")
+        return  # Stop showing dashboard if upgrade required
+    
+    # Show warning if approaching limits
+    if limits["students"] >= 8 and s["is_trial"] == 1:
+        st.warning(f"⚠️ You have {limits['students']}/10 students. Adding 2 more will require upgrade (11th student forces upgrade).")
+    
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Students", db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0])
     c2.metric("Teachers", db.execute("SELECT COUNT(*) FROM teachers WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0])
@@ -754,8 +950,26 @@ def show_students(sid):
     db = get_db_conn()
     st.header("👶 Students")
     
-    plan, max_students, _ = get_school_plan(sid)
-    curr = db.execute("SELECT COUNT(*) FROM students WHERE school_id=? AND is_active=1", (sid,)).fetchone()[0]
+    # Check trial limits first
+    limits = check_trial_limits(sid)
+    s = db.execute("SELECT * FROM schools WHERE id=?", (sid,)).fetchone()
+    
+    # Show upgrade prompt if cannot add more
+    if not limits["can_add"]:
+        if limits["reason"] == "trial_student_limit":
+            st.error("🚫 You have reached the 11 student hard limit during trial. Upgrade required to add more.")
+            show_upgrade_prompt(sid, "student_limit")
+        elif limits["reason"] == "post_trial_limit":
+            st.error("🚫 Trial ended and you have 8+ active students. Upgrade required to add more.")
+            show_upgrade_prompt(sid, "post_trial_limit")
+        return
+    
+    # Show warnings
+    if limits["students"] >= 10 and s["is_trial"] == 1:
+        st.warning("⚠️ You have 10 students. The next student (11th) will require an upgrade!")
+    elif limits["students"] >= 8 and s["is_trial"] == 1:
+        st.info(f"ℹ️ You have {limits['students']}/10 students in trial mode.")
+    
     programs = db.execute("""
         SELECT p.*, c.class_name, c.section 
         FROM programs p JOIN classes c ON p.class_id=c.id 
@@ -763,13 +977,11 @@ def show_students(sid):
     """, (sid,)).fetchall()
     prog_dict = {f"{p['program_name']} → {p['class_name']} {p['section'] or ''}": p for p in programs}
     
-    st.caption(f"Students: {curr}/{max_students}")
+    st.caption(f"Students: {limits['students']}/{limits['max']}")
     
     t1, t2 = st.tabs(["➕ Add", "📋 List"])
     with t1:
-        if curr >= max_students:
-            st.error(f"Limit reached ({max_students}). Upgrade plan.")
-        elif not programs:
+        if not programs:
             st.warning("Create programs first")
         else:
             with st.form("add_student", clear_on_submit=True):
@@ -780,7 +992,7 @@ def show_students(sid):
                     father = st.text_input("Father's Name")
                     dob = st.date_input("Date of Birth", value=date(2020,1,1))
                     blood = st.selectbox("Blood Group", ["A+","A-","B+","B-","AB+","AB-","O+","O-","Unknown"])
-                    allergy = st.text_input("Allergy / Medical Notes", placeholder="Any allergies or conditions")
+                    allergy = st.text_input("Allergy / Medical Notes", placeholder="Any allergies")
                 with c2:
                     prog = st.selectbox("Program Enrolled *", list(prog_dict.keys()))
                     phone = st.text_input("Phone Number")
@@ -791,9 +1003,15 @@ def show_students(sid):
                 photo = st.file_uploader("Profile Photo", type=["jpg","jpeg","png"])
                 if photo:
                     st.image(photo, width=150)
+                
+                # Check limit again on submit
+                current_limits = check_trial_limits(sid)
                 if st.form_submit_button("Register Student"):
                     if not name or not prog:
                         st.error("Name and Program required")
+                    elif not current_limits["can_add"]:
+                        st.error("Student limit reached! Please upgrade your plan.")
+                        st.rerun()
                     else:
                         p = prog_dict[prog]
                         age = calc_age(dob.isoformat())
@@ -807,8 +1025,14 @@ def show_students(sid):
                               sanitize(allergy), p['id'], p['class_id'], sanitize(phone), sanitize(email), sanitize(guardian),
                               sanitize(likes), sanitize(dislikes), sid, 1, ph))
                         db.commit()
-                        st.success(f"✅ {name} registered!")
-                        st.balloons()
+                        
+                        # Check if this addition hit the limit
+                        new_limits = check_trial_limits(sid)
+                        if not new_limits["can_add"]:
+                            st.warning("🎉 Student added! You've reached the limit. Upgrade now for unlimited access.")
+                        else:
+                            st.success(f"✅ {name} registered!")
+                            st.balloons()
     
     with t2:
         students = db.execute("""
@@ -1092,16 +1316,28 @@ def show_care_logs(sid):
 # =================== PHOTO GALLERY ===================
 def show_photo_gallery(sid):
     st.header("🖼️ Photo Gallery")
-    st.info("Premium Feature: Batch upload with tagging coming in Phase 3.")
+    st.info("📸 Upload and manage student photos with tagging. Batch upload coming soon!")
 
 # =================== MAIN ===================
 def school_page():
     require_auth(["head", "teacher"])
     sid = st.session_state.auth["school_id"]
-    menu, features = school_sidebar()
+    menu, features, is_expired = school_sidebar()
+    
+    # Check if upgrade is forced
+    limits = check_trial_limits(sid)
+    if is_expired or not limits["can_add"]:
+        if menu == "👶 Students":
+            show_students(sid)  # Will show upgrade prompt
+        elif menu == "📊 Dashboard":
+            show_dashboard(sid, features, is_expired)
+        else:
+            st.warning("⚠️ Please complete the upgrade to access all features.")
+            show_upgrade_prompt(sid, "trial_expired" if is_expired else "student_limit")
+        return
     
     if menu == "📊 Dashboard":
-        show_dashboard(sid, features)
+        show_dashboard(sid, features, is_expired)
     elif menu == "👨‍🏫 Teachers":
         show_teachers(sid, features)
     elif menu == "🏫 Classes & Programs":
@@ -1114,8 +1350,12 @@ def school_page():
         show_reports(sid)
     elif menu == "🧸 Care Logs":
         show_care_logs(sid)
-    elif menu == "🖼️ Photo Gallery":
-        show_photo_gallery(sid)
+    elif menu == "🖼️ Photo Gallery" or menu == "🔒 Photo Gallery (Upgrade)":
+        if features.get("photos"):
+            show_photo_gallery(sid)
+        else:
+            st.error("🔒 Photo Gallery is locked. Please upgrade to unlock this feature!")
+            show_upgrade_prompt(sid, "feature_locked")
 
 def main():
     if not st.session_state.auth["logged_in"]:
@@ -1126,7 +1366,7 @@ def main():
         school_page()
     
     st.divider()
-    st.caption("SchoolOS Pro SaaS | Phase 2 Complete")
+    st.caption("SchoolOS Pro SaaS | Free Trial: 10 students, 14 days")
 
 if __name__ == "__main__":
     main()
