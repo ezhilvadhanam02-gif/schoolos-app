@@ -671,7 +671,7 @@ def show_attendance(sid):
         students = db.execute("""
             SELECT id, name, profile_photo FROM students 
             WHERE class_id=? AND school_id=? AND is_active=1 ORDER BY name
-        """, (class_opts[sel_class], sid)).fetchall())
+        """, (class_opts[sel_class], sid)).fetchall()
 
         if not students:
             st.info("No students in this class")
